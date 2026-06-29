@@ -1,0 +1,688 @@
+/* ============================================================================
+ * Klondike Solitaire  —  drag, throw-to-play physics, turn-3, autoplay, win art
+ * Single-file, no dependencies. MIT-ish, do what you like.
+ * ==========================================================================*/
+"use strict";
+
+/* ---------------------------------------------------------------- config -- */
+
+// Geometry (design coordinates; the whole board is scaled to fit the window).
+const CARD_W = 120, CARD_H = 168, PAD = 20, GAP = 18;
+const FACE_UP_OFF = 40, FACE_DOWN_OFF = 18, WASTE_FAN = 32;
+const TABLEAU_TOP = PAD + CARD_H + 28;
+
+// Throw / animation feel.
+const THROW_SPEED   = 320;   // px/s of release velocity to count as a "throw"
+const THROW_CONE    = 0.45;  // min cos(angle) between throw & target direction (~63°)
+const MAX_THROW_VEL = 2400;  // clamp seeded velocity so it never goes wild
+const SPRING_K      = 175;   // stiffness  (pull)
+const SPRING_D      = 24;    // damping     (lower = livelier, higher = stiffer)
+
+// Win-screen images. Loaded as plain <img> (no fetch, so no CORS needed at all).
+// LoremFlickr serves random Creative-Commons photos BY KEYWORD, so the ~1-in-3
+// "prize" can be glamour shots while the rest are nice random photos of anything.
+// Edit the keyword pools freely.
+const WIN_IMAGE = {
+  prizeOdds: 0.8,           // the game's hard — reward it: mostly glamour, occasional dud
+  size: [640, 800],
+  prizeTags:  ["glamour,model,woman", "portrait,woman,fashion", "model,beauty,woman"],
+  randomTags: ["nature,landscape", "city,architecture", "wildlife,animal",
+               "mountain,sunset", "beach,ocean", "flowers,garden", "forest,waterfall"],
+};
+
+/* ----------------------------------------------------------------- model -- */
+
+const SUITS  = ["spades","hearts","diamonds","clubs"];
+const SYMBOL = ["♠","♥","♦","♣"];
+const RANKS  = ["","A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const isRed  = s => s === 1 || s === 2;
+const colorOf = s => (isRed(s) ? "red" : "black");
+
+// Pip layouts as fractional [x,y] within the face. y>0.5 pips render inverted.
+const PIPS = {
+  2:[[.5,.18],[.5,.82]],
+  3:[[.5,.18],[.5,.5],[.5,.82]],
+  4:[[.28,.18],[.72,.18],[.28,.82],[.72,.82]],
+  5:[[.28,.18],[.72,.18],[.5,.5],[.28,.82],[.72,.82]],
+  6:[[.28,.18],[.72,.18],[.28,.5],[.72,.5],[.28,.82],[.72,.82]],
+  7:[[.28,.18],[.72,.18],[.5,.34],[.28,.5],[.72,.5],[.28,.82],[.72,.82]],
+  8:[[.28,.18],[.72,.18],[.5,.34],[.28,.5],[.72,.5],[.5,.66],[.28,.82],[.72,.82]],
+  9:[[.28,.18],[.72,.18],[.28,.4],[.72,.4],[.5,.5],[.28,.6],[.72,.6],[.28,.82],[.72,.82]],
+  10:[[.28,.18],[.72,.18],[.5,.3],[.28,.4],[.72,.4],[.28,.6],[.72,.6],[.5,.7],[.28,.82],[.72,.82]],
+};
+
+const G = {
+  piles: {},          // stock, waste, foundations[4], tableau[7]
+  byId: {},
+  history: [],
+  scale: 1,
+  drag: null,
+};
+
+function makePile(type, index){ return { type, index, cards: [], el: null }; }
+
+function buildPiles(){
+  G.piles = {
+    stock: makePile("stock", 0),
+    waste: makePile("waste", 0),
+    foundations: [0,1,2,3].map(i => makePile("foundation", i)),
+    tableau: [0,1,2,3,4,5,6].map(i => makePile("tableau", i)),
+  };
+}
+
+function eachPile(fn){
+  fn(G.piles.stock); fn(G.piles.waste);
+  G.piles.foundations.forEach(fn); G.piles.tableau.forEach(fn);
+}
+
+/* -------------------------------------------------------------- geometry -- */
+
+const colX = i => PAD + i * (CARD_W + GAP);
+
+function pileBaseXY(p){
+  if (p.type === "stock")      return { x: colX(0),      y: PAD };
+  if (p.type === "waste")      return { x: colX(1),      y: PAD };
+  if (p.type === "foundation") return { x: colX(3 + p.index), y: PAD };
+  return { x: colX(p.index), y: TABLEAU_TOP }; // tableau
+}
+
+// Where card #index in pile p sits (its top-left, in design coords).
+function cardXY(p, index){
+  const base = pileBaseXY(p);
+  if (p.type === "tableau"){
+    let y = base.y;
+    for (let i = 0; i < index; i++) y += p.cards[i].faceUp ? FACE_UP_OFF : FACE_DOWN_OFF;
+    return { x: base.x, y };
+  }
+  if (p.type === "waste"){
+    const n = p.cards.length;
+    const fan = Math.max(0, index - (n - 3));     // only last 3 fan out
+    return { x: base.x + fan * WASTE_FAN, y: base.y };
+  }
+  return base; // stock & foundation stack in place
+}
+
+// Landing position for a newly-appended card (used by throw targeting).
+function landingXY(p){ return cardXY(p, p.cards.length); }
+
+/* ----------------------------------------------------------------- rules -- */
+
+const topCard = p => p.cards[p.cards.length - 1] || null;
+
+function canDropFoundation(card, f){
+  const t = topCard(f);
+  return t ? (card.suit === t.suit && card.rank === t.rank + 1)
+           : card.rank === 1;
+}
+function canDropTableau(card, p){
+  const t = topCard(p);
+  return t ? (colorOf(card.suit) !== colorOf(t.suit) && card.rank === t.rank - 1)
+           : card.rank === 13;
+}
+// Is [lead..end] of a tableau pile a movable alternating-descending run?
+function isValidRun(cards){
+  for (let i = 1; i < cards.length; i++){
+    const a = cards[i-1], b = cards[i];
+    if (colorOf(a.suit) === colorOf(b.suit) || b.rank !== a.rank - 1) return false;
+  }
+  return true;
+}
+function canDrop(group, p){
+  if (p.type === "foundation") return group.length === 1 && canDropFoundation(group[0], p);
+  if (p.type === "tableau")    return isValidRun(group) && canDropTableau(group[0], p);
+  return false;
+}
+
+/* ------------------------------------------------------------ DOM / cards -- */
+
+const boardEl = document.getElementById("board");
+
+// Bundled card art, all freely licensed and shipped locally.
+const RANK_NAME = ["","ace","2","3","4","5","6","7","8","9","10","jack","queen","king"];
+const DECKS = {
+  knoll: { label: "Classic", dir: "assets/decks/knoll" },   // Byron Knoll, public domain
+  fomin: { label: "English", dir: "assets/decks/fomin" },   // Dmitry Fomin, CC0
+};
+let currentDeck = "knoll";
+const cardFile = card => `${DECKS[currentDeck].dir}/${RANK_NAME[card.rank]}_of_${SUITS[card.suit]}.svg`;
+
+// Minimal CSS fallback face if an SVG asset fails to load.
+function textFace(card){
+  const sym = SYMBOL[card.suit], r = RANKS[card.rank];
+  return `<div class="corner tl"><span class="r">${r}</span><span class="s">${sym}</span></div>` +
+         `<div class="corner br"><span class="r">${r}</span><span class="s">${sym}</span></div>` +
+         `<div class="center-suit">${sym}</div>`;
+}
+
+function renderCard(card){
+  const el = card.el;
+  el.style.width = CARD_W + "px"; el.style.height = CARD_H + "px";
+  if (!card.faceUp){ el.className = "card back"; el.innerHTML = ""; return; }
+
+  el.className = `card face ${colorOf(card.suit)}`;
+  const img = new Image();
+  img.draggable = false;
+  img.alt = `${RANKS[card.rank]}${SYMBOL[card.suit]}`;
+  img.onerror = () => { el.innerHTML = textFace(card); };
+  img.src = cardFile(card);
+  el.innerHTML = "";
+  el.appendChild(img);
+}
+
+function place(card, x, y, z){
+  card.el.style.transform = `translate(${x}px,${y}px)`;
+  if (z != null) card.el.style.zIndex = z;
+}
+
+function layout(){
+  let z = 0, maxBottom = TABLEAU_TOP + CARD_H;
+  eachPile(p => {
+    p.cards.forEach((card, i) => {
+      const { x, y } = cardXY(p, i);
+      card.home = { x, y };
+      place(card, x, y, ++z);
+      maxBottom = Math.max(maxBottom, y + CARD_H);
+    });
+  });
+  boardEl.style.width  = (PAD*2 + 7*CARD_W + 6*GAP) + "px";
+  boardEl.style.height = (maxBottom + PAD) + "px";
+  fitBoard();
+  updateStatus();
+}
+
+function fitBoard(){
+  const designW = PAD*2 + 7*CARD_W + 6*GAP;
+  const avail = Math.min(window.innerWidth - 12, 1200);
+  const scale = Math.min(1, avail / designW);
+  G.scale = scale;
+  boardEl.style.transform = `scale(${scale})`;
+  document.getElementById("stage").style.height =
+    (parseFloat(boardEl.style.height) * scale + 24) + "px";
+}
+
+/* ---------------------------------------------------------------- dealing -- */
+
+function newGame(){
+  boardEl.innerHTML = "";
+  buildPiles();
+  G.byId = {}; G.history = []; G.winShown = false;
+  document.getElementById("winOverlay").hidden = true;
+
+  // pile bases
+  eachPile(p => {
+    const b = document.createElement("div");
+    b.className = "pile-base" + (p.type === "stock" ? " stock" : "");
+    const { x, y } = pileBaseXY(p);
+    b.style.cssText = `left:0;top:0;width:${CARD_W}px;height:${CARD_H}px;transform:translate(${x}px,${y}px)`;
+    if (p.type === "foundation") b.innerHTML = `<div class="glyph">${SYMBOL[p.index]}</div>`;
+    if (p.type === "stock")      b.innerHTML = `<div class="glyph">⟳</div>`;
+    p.el = b; boardEl.appendChild(b);
+    if (p.type === "stock") b.addEventListener("click", drawFromStock);
+  });
+
+  // deck
+  const deck = [];
+  let id = 0;
+  for (let s = 0; s < 4; s++) for (let r = 1; r <= 13; r++){
+    const card = { id: id++, suit: s, rank: r, faceUp: false, el: null };
+    card.el = document.createElement("div");
+    card.el.dataset.id = card.id;
+    card.el.addEventListener("pointerdown", onPointerDown);
+    card.el.addEventListener("dblclick", onDoubleClick);
+    boardEl.appendChild(card.el);
+    deck.push(card); G.byId[card.id] = card;
+  }
+  for (let i = deck.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+
+  // deal tableau
+  let k = 0;
+  for (let col = 0; col < 7; col++){
+    for (let n = 0; n <= col; n++){
+      const card = deck[k++];
+      card.faceUp = (n === col);
+      G.piles.tableau[col].cards.push(card);
+    }
+  }
+  while (k < deck.length){ const c = deck[k++]; c.faceUp = false; G.piles.stock.cards.push(c); }
+
+  eachPile(p => p.cards.forEach(renderCard));
+  layout();
+}
+
+/* -------------------------------------------------------------- undo state -- */
+
+function snapshot(){
+  const snap = { stock:[], waste:[], foundations:[[],[],[],[]], tableau:[[],[],[],[],[],[],[]] };
+  G.piles.stock.cards.forEach(c => snap.stock.push([c.id, c.faceUp]));
+  G.piles.waste.cards.forEach(c => snap.waste.push([c.id, c.faceUp]));
+  G.piles.foundations.forEach((f,i) => f.cards.forEach(c => snap.foundations[i].push([c.id,c.faceUp])));
+  G.piles.tableau.forEach((t,i) => t.cards.forEach(c => snap.tableau[i].push([c.id,c.faceUp])));
+  return snap;
+}
+function pushHistory(){ G.history.push(snapshot()); if (G.history.length > 300) G.history.shift(); }
+function applySnapshot(snap){
+  const load = (pile, arr) => {
+    pile.cards = arr.map(([id, up]) => { const c = G.byId[id]; c.faceUp = up; return c; });
+  };
+  load(G.piles.stock, snap.stock);
+  load(G.piles.waste, snap.waste);
+  snap.foundations.forEach((a,i) => load(G.piles.foundations[i], a));
+  snap.tableau.forEach((a,i) => load(G.piles.tableau[i], a));
+  eachPile(p => p.cards.forEach(renderCard));
+  layout();
+}
+function undo(){
+  if (!G.history.length) return;
+  applySnapshot(G.history.pop());
+}
+
+/* -------------------------------------------------------------- stock draw -- */
+
+function drawFromStock(){
+  const stock = G.piles.stock, waste = G.piles.waste;
+  pushHistory();
+  if (stock.cards.length === 0){
+    // recycle waste -> stock
+    while (waste.cards.length){
+      const c = waste.cards.pop(); c.faceUp = false; renderCard(c); stock.cards.push(c);
+    }
+  } else {
+    const n = document.getElementById("drawThree").checked ? 3 : 1;
+    for (let i = 0; i < n && stock.cards.length; i++){
+      const c = stock.cards.pop(); c.faceUp = true; renderCard(c); waste.cards.push(c);
+    }
+  }
+  layout();
+}
+
+/* ---------------------------------------------------- find pile of a card -- */
+
+function findCard(cardId){
+  let res = null;
+  eachPile(p => { const i = p.cards.findIndex(c => c.id == cardId); if (i >= 0) res = { pile:p, index:i }; });
+  return res;
+}
+
+/* ------------------------------------------------------------- move commit -- */
+
+// Move group (array of cards) from src pile to dst pile. Assumes legal.
+function commitMove(group, src, dst){
+  group.forEach(() => src.cards.pop());      // remove from end of src
+  group.forEach(c => dst.cards.push(c));
+  // flip newly exposed tableau card
+  if (src.type === "tableau"){
+    const t = topCard(src);
+    if (t && !t.faceUp){ t.faceUp = true; renderCard(t); }
+  }
+}
+
+/* ------------------------------------------------------- pointer dragging -- */
+
+function boardPoint(e, rect, scale){
+  const r = rect || boardEl.getBoundingClientRect();
+  const s = scale || G.scale;
+  return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s };
+}
+
+function onPointerDown(e){
+  if (e.button != null && e.button !== 0) return;
+  const card = G.byId[e.currentTarget.dataset.id];
+  const loc = findCard(card.id);
+  if (!loc) return;
+  const { pile, index } = loc;
+
+  if (pile.type === "stock"){ drawFromStock(); return; }  // stock cards cover the base
+  if (!card.faceUp) return;
+  if (pile.type === "waste" && index !== pile.cards.length - 1) return;
+  if (pile.type === "foundation" && index !== pile.cards.length - 1) return;
+
+  const group = pile.cards.slice(index);             // this card + everything on top
+  if (pile.type === "tableau" && !isValidRun(group)) return;
+
+  // Cache the board rect/scale once per drag so pointermove never forces reflow.
+  const rect = boardEl.getBoundingClientRect();
+  const scale = G.scale;
+  const pt = boardPoint(e, rect, scale);
+  const lead = group[0];
+
+  G.drag = {
+    group, src: pile, lead, rect, scale,
+    grabDX: pt.x - lead.home.x, grabDY: pt.y - lead.home.y,
+    leadX: lead.home.x, leadY: lead.home.y,
+    offsets: group.map(c => ({ c, dx: c.home.x - lead.home.x, dy: c.home.y - lead.home.y })),
+    samples: [{ t: performance.now(), x: pt.x, y: pt.y }],
+  };
+
+  let zi = 2000;
+  group.forEach(c => { c.el.classList.add("dragging"); c.el.style.zIndex = ++zi; });
+  e.preventDefault();   // window-level move/up/cancel listeners (registered once) take it from here
+}
+
+function setGroupPos(drag, lx, ly){
+  drag.leadX = lx; drag.leadY = ly;
+  for (const o of drag.offsets) place(o.c, lx + o.dx, ly + o.dy);
+}
+
+function onPointerMove(e){
+  const d = G.drag; if (!d) return;
+  const pt = boardPoint(e, d.rect, d.scale);
+  setGroupPos(d, pt.x - d.grabDX, pt.y - d.grabDY);
+  d.samples.push({ t: performance.now(), x: pt.x, y: pt.y });
+  if (d.samples.length > 6) d.samples.shift();
+}
+
+function releaseVelocity(samples){
+  if (samples.length < 2) return { vx:0, vy:0 };
+  const a = samples[0], b = samples[samples.length - 1];
+  const dt = (b.t - a.t) / 1000;
+  if (dt <= 0) return { vx:0, vy:0 };
+  return { vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt };
+}
+
+function onPointerEnd(e){
+  const d = G.drag; if (!d) return;
+  G.drag = null;
+  d.group.forEach(c => c.el.classList.remove("dragging"));
+
+  // Interrupted drag (touch cancel, context menu, etc.): just settle back home.
+  if (e.type === "pointercancel"){
+    animateGroup(d, d.lead.home.x, d.lead.home.y, 0, 0, () => layout());
+    return;
+  }
+
+  const validTargets = [];
+  eachPile(p => { if (p !== d.src && canDrop(d.group, p)) validTargets.push(p); });
+
+  const { vx, vy } = releaseVelocity(d.samples);
+  const speed = Math.hypot(vx, vy);
+
+  // 1) Throw: pick the valid target best aligned with the release direction.
+  let chosen = null;
+  if (speed > THROW_SPEED && validTargets.length){
+    let best = -2;
+    for (const p of validTargets){
+      const land = landingXY(p);
+      const dx = land.x - d.leadX, dy = land.y - d.leadY;
+      const dist = Math.hypot(dx, dy) || 1;
+      const cos = (vx*dx + vy*dy) / (speed * dist);
+      const score = cos - dist / 6000;           // prefer aligned, nearer
+      if (cos > THROW_CONE && score > best){ best = score; chosen = p; }
+    }
+  }
+
+  // 2) Otherwise drop on whatever valid pile the card overlaps most.
+  if (!chosen){
+    let bestArea = CARD_W * CARD_H * 0.18;
+    const lr = { x: d.leadX, y: d.leadY };
+    for (const p of validTargets){
+      const land = landingXY(p);
+      const ix = Math.max(0, Math.min(lr.x+CARD_W, land.x+CARD_W) - Math.max(lr.x, land.x));
+      const iy = Math.max(0, Math.min(lr.y+CARD_H, land.y+CARD_H) - Math.max(lr.y, land.y));
+      const area = ix * iy;
+      if (area > bestArea){ bestArea = area; chosen = p; }
+    }
+  }
+
+  if (chosen){
+    pushHistory();
+    const dst = chosen;
+    commitMove(d.group, d.src, dst);
+    const land = cardXY(dst, dst.cards.length - d.group.length);
+    animateGroup(d, land.x, land.y, vx, vy, () => { layout(); afterMove(); });
+  } else {
+    // return home
+    const home = d.lead.home;
+    animateGroup(d, home.x, home.y, vx*0.25, vy*0.25, () => layout());
+  }
+}
+
+/* ----------------------------------------------------------- spring anim -- */
+
+let animSeq = 0;
+function animateGroup(drag, tx, ty, vx, vy, done, fast){
+  // Tag every card in this group; if a newer animation claims any of them, this
+  // loop bows out on its next frame — no two rAF loops ever fight over a card.
+  const token = ++animSeq;
+  drag.group.forEach(c => c.el._anim = token);
+  const owns = () => drag.group.every(c => c.el._anim === token);
+
+  const K = fast ? 560 : SPRING_K;     // fast: stiff, ~critically damped, zips home
+  const D = fast ? 47  : SPRING_D;
+  const cap = fast ? 350 : 1500;       // hard cap on loop lifetime
+
+  let lx = drag.leadX, ly = drag.leadY;
+  let vX = Math.max(-MAX_THROW_VEL, Math.min(MAX_THROW_VEL, vx));
+  let vY = Math.max(-MAX_THROW_VEL, Math.min(MAX_THROW_VEL, vy));
+  const start = performance.now();
+  let last = start;
+
+  function finish(){
+    setGroupPos(drag, tx, ty);
+    drag.group.forEach(c => { if (c.el._anim === token) c.el._anim = 0; });
+    done && done();
+  }
+  function frame(now){
+    if (!owns()) return;                       // superseded — stop cleanly
+    let dt = (now - last) / 1000; last = now;
+    if (dt > 0.032) dt = 0.032;
+    const ax = K * (tx - lx) - D * vX;
+    const ay = K * (ty - ly) - D * vY;
+    vX += ax * dt; vY += ay * dt;
+    lx += vX * dt; ly += vY * dt;
+    setGroupPos(drag, lx, ly);
+    const settled = Math.hypot(tx - lx, ty - ly) < 0.6 && Math.hypot(vX, vY) < 14;
+    if (settled || now - start > cap){          // hard cap: never run forever
+      finish();
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* --------------------------------------------------- double-click to play -- */
+
+function findFoundationFor(card){
+  return G.piles.foundations.find(f => canDropFoundation(card, f)) || null;
+}
+
+// Double-click "suck": send the card UP to its foundation if it can go. Finding
+// tableau plays is part of the game's challenge, so we never do those for you.
+function onDoubleClick(e){
+  const card = G.byId[e.currentTarget.dataset.id];
+  const loc = findCard(card.id);
+  if (!loc || !card.faceUp) return;
+  const { pile, index } = loc;
+  if (index !== pile.cards.length - 1) return;   // only the exposed top card
+
+  const dst = findFoundationFor(card);
+  if (!dst) return;
+
+  pushHistory();
+  const group = [card];
+  const drag = {
+    group, lead: card, leadX: card.home.x, leadY: card.home.y,
+    offsets: [{ c: card, dx: 0, dy: 0 }],
+  };
+  commitMove(group, pile, dst);
+  card.el.style.zIndex = 3000;
+  const land = cardXY(dst, dst.cards.length - 1);
+  animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); afterMove(); });
+}
+
+/* ------------------------------------------------------ autoplay & finish -- */
+
+// "Safe" to auto-send to foundation without hurting tableau building.
+function isSafe(card){
+  if (card.rank <= 2) return true;
+  const f = G.piles.foundations;
+  const opp = colorOf(card.suit) === "red" ? "black" : "red";
+  // both opposite-color foundations must be high enough that this card is never needed
+  const oppPiles = f.map(p=>topCard(p)).filter(t=>t&&colorOf(t.suit)===opp).map(t=>t.rank);
+  const oppMin = oppPiles.length === 2 ? Math.min(...oppPiles) : 0;
+  return oppMin >= card.rank - 1;
+}
+
+function collectibleCards(force){
+  const out = [];
+  const consider = (pile) => {
+    const c = topCard(pile); if (!c || !c.faceUp) return;
+    const f = findFoundationFor(c);
+    if (f && (force || isSafe(c))) out.push({ card:c, pile, f });
+  };
+  consider(G.piles.waste);
+  G.piles.tableau.forEach(consider);
+  return out;
+}
+
+function autoCollectStep(force){
+  const list = collectibleCards(force);
+  if (!list.length){ updateFinishButton(); checkWin(); return; }
+  // Once the outcome is decided (or on Auto-finish), blast cards up fast and
+  // overlapped instead of waiting for each one to settle.
+  const fast = force || isAutoFinishable();
+  const { card, pile, f } = list[0];
+  pushHistory();
+  const drag = { group:[card], lead:card, leadX:card.home.x, leadY:card.home.y,
+                 offsets:[{c:card,dx:0,dy:0}] };
+  commitMove([card], pile, f);
+  const land = cardXY(f, f.cards.length - 1);
+  card.el.style.zIndex = 3000 + f.cards.length;
+  if (fast){
+    animateGroup(drag, land.x, land.y, 0, 0, () => layout(), true);
+    setTimeout(() => autoCollectStep(force), 55);      // stagger next while this flies
+  } else {
+    animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); autoCollectStep(force); });
+  }
+}
+
+function afterMove(){
+  updateFinishButton();
+  if (document.getElementById("autoplay").checked) autoCollectStep(false);
+  else checkWin();
+}
+
+function isAutoFinishable(){
+  if (G.piles.stock.cards.length || G.piles.waste.cards.length) return false;
+  return G.piles.tableau.every(t => t.cards.every(c => c.faceUp));
+}
+function updateFinishButton(){
+  document.getElementById("finish").hidden = !isAutoFinishable() || isWon();
+}
+
+/* ----------------------------------------------------------------- win -- */
+
+function isWon(){
+  return G.piles.foundations.length === 4 &&
+         G.piles.foundations.every(f => f.cards.length === 13);
+}
+function checkWin(){ if (isWon() && !G.winShown){ G.winShown = true; showWin(); } }
+
+function updateStatus(){
+  const f = G.piles.foundations.reduce((n,p)=>n+p.cards.length,0);
+  document.getElementById("status").textContent = `Foundations: ${f}/52`;
+}
+
+// Resolve to a loaded <img>, or reject — but never hang (hard timeout).
+function loadImage(url, ms){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const timer = setTimeout(() => { img.src = ""; reject(new Error("timeout")); }, ms);
+    img.onload  = () => { clearTimeout(timer); resolve(img); };
+    img.onerror = () => { clearTimeout(timer); reject(new Error("error")); };
+    img.src = url;
+  });
+}
+
+const rnd = () => Math.floor(Math.random() * 1e9);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+// LoremFlickr: random CC photo by keyword. The trailing ?random= busts the
+// browser cache so each win pulls a fresh image.
+function flickrUrl(tags){
+  const [w, h] = WIN_IMAGE.size;
+  return `https://loremflickr.com/${w}/${h}/${encodeURIComponent(tags)}?random=${rnd()}`;
+}
+function picsumUrl(){
+  const [w, h] = WIN_IMAGE.size;
+  return `https://picsum.photos/seed/${rnd()}/${w}/${h}`;
+}
+
+// Test hooks:  ?prize  or ?prize=1 forces the glamour route, ?prize=0 forces a
+// plain random photo;  ?win  pops the win screen immediately (no need to win).
+const PARAMS = new URLSearchParams(location.search);
+
+// Build the candidate list: themed source first, then independent fallbacks so a
+// hiccup on one host still yields a picture.
+function winCandidates(){
+  const forced = PARAMS.get("prize");
+  const prize = forced !== null ? forced !== "0" : Math.random() < WIN_IMAGE.prizeOdds;
+  const label = "";
+  if (prize){
+    return [
+      [flickrUrl(pick(WIN_IMAGE.prizeTags)), label],
+      [flickrUrl("woman,model"),             label],
+      [picsumUrl(),                          "random photo"],
+    ];
+  }
+  return [
+    [flickrUrl(pick(WIN_IMAGE.randomTags)), label],
+    [picsumUrl(),                           "random photo"],
+    [flickrUrl(pick(WIN_IMAGE.randomTags)), label],
+  ];
+}
+
+async function showWin(){
+  const overlay = document.getElementById("winOverlay");
+  const wrap = document.getElementById("winImageWrap");
+  const cap  = document.getElementById("winCaption");
+  overlay.hidden = false;
+  wrap.innerHTML = '<div class="spinner"></div>';
+  cap.textContent = "";
+
+  for (const [url, label] of winCandidates()){
+    try {
+      const img = await loadImage(url, 9000);
+      img.draggable = false;
+      wrap.innerHTML = ""; wrap.appendChild(img);
+      cap.textContent = label;
+      return;
+    } catch { /* try next source */ }
+  }
+  wrap.innerHTML = '<div style="padding:2rem;opacity:.7">🏆<br>(couldn\'t reach the photo sources this time)</div>';
+}
+
+/* ---------------------------------------------------------------- wiring -- */
+
+// Drag listeners are registered ONCE here (not per-drag) and no-op when idle —
+// so they can never accumulate or leak across drags/games.
+window.addEventListener("pointermove", onPointerMove);
+window.addEventListener("pointerup", onPointerEnd);
+window.addEventListener("pointercancel", onPointerEnd);
+
+document.getElementById("newGame").addEventListener("click", newGame);
+document.getElementById("winNew").addEventListener("click", newGame);
+document.getElementById("undo").addEventListener("click", undo);
+document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
+window.addEventListener("resize", () => { fitBoard();
+  document.getElementById("stage").style.height =
+    (parseFloat(boardEl.style.height) * G.scale + 24) + "px"; });
+
+// Deck picker — remember the choice and re-skin cards live (no re-deal).
+const deckSel = document.getElementById("deck");
+const savedDeck = localStorage.getItem("deck");
+if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
+deckSel.value = currentDeck;
+deckSel.addEventListener("change", () => {
+  currentDeck = deckSel.value;
+  localStorage.setItem("deck", currentDeck);
+  eachPile(p => p.cards.forEach(renderCard));
+  layout();
+});
+
+newGame();
+
+// Quick win-screen test: load with ?win (optionally + ?prize / ?prize=0).
+if (PARAMS.has("win")) showWin();

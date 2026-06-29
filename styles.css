@@ -1,0 +1,123 @@
+:root{
+  --felt-1:#0b6e3b;
+  --felt-2:#075a30;
+  --card-red:#c8102e;
+  --card-black:#1a1a1a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:radial-gradient(circle at 50% 0%,var(--felt-1),var(--felt-2));
+  color:#eafff1;
+  -webkit-user-select:none;user-select:none;
+  overflow-x:hidden;
+}
+
+#toolbar{
+  display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;
+  padding:.5rem .9rem;
+  background:rgba(0,0,0,.28);
+  box-shadow:0 2px 8px rgba(0,0,0,.35);
+}
+.brand{font-weight:700;font-size:1.1rem;margin-right:.4rem}
+#toolbar button{
+  font:inherit;font-size:.9rem;
+  padding:.35rem .8rem;border:none;border-radius:7px;
+  background:#ffffff1a;color:#fff;cursor:pointer;transition:background .15s;
+}
+#toolbar button:hover{background:#ffffff33}
+.toggle{display:flex;align-items:center;gap:.3rem;font-size:.85rem;opacity:.95;cursor:pointer}
+.toggle select{font:inherit;font-size:.82rem;background:#ffffff1a;color:#fff;border:none;border-radius:6px;padding:.2rem .35rem;cursor:pointer}
+.toggle select option{color:#111}
+#status{margin-left:auto;font-size:.85rem;opacity:.85}
+
+#stage{padding:18px 0;display:flex;justify-content:center}
+#board{position:relative;transform-origin:top left}
+
+/* piles */
+.pile-base{
+  position:absolute;border-radius:9px;
+  border:2px solid #ffffff2e;
+  background:#ffffff0d;
+}
+.pile-base.stock{cursor:pointer}
+.pile-base .glyph{
+  width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  font-size:34px;opacity:.32;color:#fff;
+}
+
+/* cards */
+.card{
+  position:absolute;border-radius:9px;
+  background:#fdfdfb;
+  box-shadow:0 1px 2px rgba(0,0,0,.35);
+  touch-action:none;cursor:pointer;   /* finger cursor: hotspot is the fingertip, where you aim */
+  will-change:transform;
+  overflow:hidden;
+}
+.card.dragging{cursor:grabbing;box-shadow:0 14px 26px rgba(0,0,0,.45)}
+.card.red{color:var(--card-red)}
+.card.black{color:var(--card-black)}
+
+.card.face{background:#fff;border:1px solid #0000001f}
+.card.face img{
+  width:100%;height:100%;display:block;border-radius:8px;
+  pointer-events:none;-webkit-user-drag:none;user-select:none;
+}
+
+.card .corner{
+  position:absolute;display:flex;flex-direction:column;align-items:center;
+  line-height:1;font-weight:700;
+}
+.card .corner .r{font-size:18px}
+.card .corner .s{font-size:15px;margin-top:1px}
+.card .corner.tl{top:5px;left:6px}
+.card .corner.br{right:6px;bottom:5px;transform:rotate(180deg)}
+
+.card .pip{position:absolute;transform:translate(-50%,-50%);font-size:22px;line-height:1}
+.card .pip.flip{transform:translate(-50%,-50%) rotate(180deg)}
+
+.card .court{
+  position:absolute;inset:14px;border:1.5px solid currentColor;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:46px;font-weight:700;opacity:.92;
+}
+.card .center-suit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:54px}
+
+/* card back */
+.card.back{
+  background:
+    repeating-linear-gradient(45deg,#1d4ed8 0 8px,#1e40af 8px 16px);
+  border:3px solid #fff;
+}
+.card.back::after{
+  content:"";position:absolute;inset:6px;border-radius:5px;
+  border:2px solid #ffffff55;
+}
+
+/* win overlay */
+#winOverlay{
+  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.72);z-index:5000;
+}
+#winOverlay[hidden]{display:none}   /* author rule must restore what [hidden] means */
+.win-card{
+  background:#10261a;border:1px solid #ffffff22;border-radius:16px;
+  padding:1.4rem;max-width:min(92vw,520px);text-align:center;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);
+}
+.win-card h1{margin:.2rem 0 1rem}
+#winImageWrap{
+  min-height:260px;border-radius:12px;overflow:hidden;background:#0000003a;
+  display:flex;align-items:center;justify-content:center;
+}
+#winImageWrap img{max-width:100%;max-height:64vh;display:block}
+#winCaption{font-size:.8rem;opacity:.7;margin:.7rem 0 1rem;word-break:break-word}
+#winNew{font:inherit;padding:.55rem 1.2rem;border:none;border-radius:9px;
+  background:#16a34a;color:#fff;cursor:pointer;font-weight:600}
+.spinner{
+  width:42px;height:42px;border-radius:50%;
+  border:4px solid #ffffff33;border-top-color:#fff;animation:spin 1s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
