@@ -173,10 +173,12 @@ function phoneCardSVG(card){
     `<path transform="translate(${cx} ${cy}) scale(${(ps/32).toFixed(4)}) translate(-16 -16)" fill="${col}" d="${d}"/>`;
   let s = `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`;
   s += `<text x="18" y="120" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="${fs}" fill="${col}">${label}</text>`;
-  s += pip(58, 188, 96);                                     // one large suit pip under the rank
   if (card.rank >= 11){
+    s += pip(58, 188, 96);                                   // court: pip under rank + head
     const href = `assets/decks/phone/heads/${RANK_NAME[card.rank]}_of_${SUITS[card.suit]}.png`;
     s += `<image href="${href}" xlink:href="${href}" x="118" y="198" width="126" height="142"/>`;
+  } else {
+    s += pip(162, 226, 176);                                 // number/ace: one huge pip, lower-right
   }
   return s + `</svg>`;
 }
