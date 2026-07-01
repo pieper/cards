@@ -83,7 +83,7 @@ body{
 .card.black{color:var(--card-black)}
 
 .card.face{background:#fff;border:1px solid #0000001f}
-.card.face img{
+.card.face img,.card.face svg.cardsvg{
   width:100%;height:100%;display:block;border-radius:8px;
   pointer-events:none;-webkit-user-drag:none;user-select:none;
 }

@@ -18,7 +18,10 @@ double‑click to send a card up to the foundation, and a little reward on a win
   locally as SVGs under `assets/decks/`:
   - **Classic** — Byron Knoll's *Vector Playing Cards* (public domain).
   - **English** — Dmitry Fomin's *English‑pattern* deck (CC0).
-  Your choice is remembered between sessions.
+  - **Phone** — big‑rank, high‑legibility deck for small screens (drawn in‑app;
+    court cards reuse the single head from the Classic deck). Auto‑selected on
+    phone‑sized screens; not forced on iPad.
+  Your choice is remembered between sessions. Force one with `?deck=phone`.
 - **Turn‑3** dealing (toggle to turn‑1 in the toolbar). Every game starts in
   turn‑3; after you've gone once through the deck it sparkles and drops to
   turn‑1 so you can play the game out. A new game resets to turn‑3.

@@ -150,9 +150,50 @@ const RANK_NAME = ["","ace","2","3","4","5","6","7","8","9","10","jack","queen",
 const DECKS = {
   knoll: { label: "Classic", dir: "assets/decks/knoll" },   // Byron Knoll, public domain
   fomin: { label: "English", dir: "assets/decks/fomin" },   // Dmitry Fomin, CC0
+  phone: { label: "Phone",   type: "phone" },               // big-rank deck, drawn in JS
 };
 let currentDeck = "knoll";
 const cardFile = card => `${DECKS[currentDeck].dir}/${RANK_NAME[card.rank]}_of_${SUITS[card.suit]}.svg`;
+
+/* --- "Phone" deck: huge Arial rank + vector pips, single head on the courts --- */
+// Suit pip paths in a 32×32 box (indexed by suit: spades,hearts,diamonds,clubs).
+const SUIT_PATH = [
+  "M16 3 C16 3 4 12 4 19 C4 22.5 6.4 24.5 9.3 24.5 C11 24.5 12.3 23.6 12.3 23.6 C12 26 11 28.5 8.5 30 L23.5 30 C21 28.5 20 26 19.7 23.6 C19.7 23.6 21 24.5 22.7 24.5 C25.6 24.5 28 22.5 28 19 C28 12 16 3 16 3 Z",
+  "M16 29 C16 29 4 20 4 11.5 C4 7 7.5 4 11 4 C13.7 4 16 6.5 16 6.5 C16 6.5 18.3 4 21 4 C24.5 4 28 7 28 11.5 C28 20 16 29 16 29 Z",
+  "M16 2 L28 16 L16 30 L4 16 Z",
+  "M16 3 C13.2 3 11 5.2 11 8 C11 9.1 11.4 10.1 12 10.9 C11.6 10.7 11.1 10.6 10.6 10.6 C7.8 10.6 5.6 12.8 5.6 15.6 C5.6 18.4 7.8 20.6 10.6 20.6 C12.4 20.6 14 19.6 14.8 18.2 C14.6 21 13.4 25.5 10.5 30 L21.5 30 C18.6 25.5 17.4 21 17.2 18.2 C18 19.6 19.6 20.6 21.4 20.6 C24.2 20.6 26.4 18.4 26.4 15.6 C26.4 12.8 24.2 10.6 21.4 10.6 C20.9 10.6 20.4 10.7 20 10.9 C20.6 10.1 21 9.1 21 8 C21 5.2 18.8 3 16 3 Z",
+];
+const PHONE_COLOR = ["#111111", "#df0000", "#df0000", "#111111"];   // by suit index
+// pip positions (fractions of the card), kept clear of the big upper-left rank
+const _PL = 0.60, _PR = 0.85, _PM = 0.72;
+const PHONE_PIPS = {
+  2:[[_PM,.18],[_PM,.82]], 3:[[_PM,.16],[_PM,.5],[_PM,.84]],
+  4:[[_PL,.18],[_PR,.18],[_PL,.82],[_PR,.82]],
+  5:[[_PL,.18],[_PR,.18],[_PM,.5],[_PL,.82],[_PR,.82]],
+  6:[[_PL,.17],[_PR,.17],[_PL,.5],[_PR,.5],[_PL,.83],[_PR,.83]],
+  7:[[_PL,.15],[_PR,.15],[_PM,.33],[_PL,.5],[_PR,.5],[_PL,.85],[_PR,.85]],
+  8:[[_PL,.15],[_PR,.15],[_PM,.32],[_PL,.5],[_PR,.5],[_PM,.68],[_PL,.85],[_PR,.85]],
+  9:[[_PL,.14],[_PR,.14],[_PL,.38],[_PR,.38],[_PM,.5],[_PL,.62],[_PR,.62],[_PL,.86],[_PR,.86]],
+  10:[[_PL,.13],[_PR,.13],[_PM,.27],[_PL,.4],[_PR,.4],[_PL,.6],[_PR,.6],[_PM,.73],[_PL,.87],[_PR,.87]],
+};
+function phoneCardSVG(card){
+  const W = 250, H = 350, col = PHONE_COLOR[card.suit], d = SUIT_PATH[card.suit];
+  const label = RANKS[card.rank], fs = label.length === 1 ? 140 : 104;
+  const pip = (cx, cy, ps, rot) =>
+    `<path transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)}) scale(${(ps/32).toFixed(4)}) ${rot?"rotate(180 16 16) ":""}translate(-16 -16)" fill="${col}" d="${d}"/>`;
+  let s = `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`;
+  s += `<text x="16" y="132" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="${fs}" fill="${col}">${label}</text>`;
+  if (card.rank === 1){
+    s += pip(W*0.66, H*0.52, 120, false);
+  } else if (card.rank <= 10){
+    for (const [fx, fy] of PHONE_PIPS[card.rank]) s += pip(fx*W, fy*H, 40, fy > 0.5);
+  } else {
+    s += pip(48, 176, 64, false);
+    const href = `assets/decks/phone/heads/${RANK_NAME[card.rank]}_of_${SUITS[card.suit]}.png`;
+    s += `<image href="${href}" xlink:href="${href}" x="108" y="191" width="138" height="155"/>`;
+  }
+  return s + `</svg>`;
+}
 
 // Minimal CSS fallback face if an SVG asset fails to load.
 function textFace(card){
@@ -168,6 +209,10 @@ function renderCard(card){
   if (!card.faceUp){ el.className = "card back"; el.innerHTML = ""; return; }
 
   el.className = `card face ${colorOf(card.suit)}`;
+  if (DECKS[currentDeck].type === "phone"){
+    el.innerHTML = phoneCardSVG(card);
+    return;
+  }
   const img = new Image();
   img.draggable = false;
   img.alt = `${RANKS[card.rank]}${SYMBOL[card.suit]}`;
@@ -722,9 +767,14 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch { return null
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 // Deck picker — remember the choice and re-skin cards live (no re-deal).
+// On a phone-sized screen (not iPad) default to the big-rank Phone deck.
+const IS_PHONE_SCREEN = Math.min(screen.width, screen.height) <= 480;
 const deckSel = document.getElementById("deck");
+const forcedDeck = PARAMS.get("deck");
 const savedDeck = lsGet("deck");
-if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
+if (forcedDeck && DECKS[forcedDeck]) currentDeck = forcedDeck;   // ?deck=phone|knoll|fomin
+else if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
+else if (IS_PHONE_SCREEN) currentDeck = "phone";
 deckSel.value = currentDeck;
 deckSel.addEventListener("change", () => {
   currentDeck = deckSel.value;
