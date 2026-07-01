@@ -164,23 +164,17 @@ const SUIT_PATH = [
   "M16 3 C13.2 3 11 5.2 11 8 C11 9.1 11.4 10.1 12 10.9 C11.6 10.7 11.1 10.6 10.6 10.6 C7.8 10.6 5.6 12.8 5.6 15.6 C5.6 18.4 7.8 20.6 10.6 20.6 C12.4 20.6 14 19.6 14.8 18.2 C14.6 21 13.4 25.5 10.5 30 L21.5 30 C18.6 25.5 17.4 21 17.2 18.2 C18 19.6 19.6 20.6 21.4 20.6 C24.2 20.6 26.4 18.4 26.4 15.6 C26.4 12.8 24.2 10.6 21.4 10.6 C20.9 10.6 20.4 10.7 20 10.9 C20.6 10.1 21 9.1 21 8 C21 5.2 18.8 3 16 3 Z",
 ];
 const PHONE_COLOR = ["#111111", "#df0000", "#df0000", "#111111"];   // by suit index
-// One BIG rank + one BIG suit pip below it, so colour/suit read clearly on a
-// small screen. Court cards additionally show the single head, lower-right.
+// Every card: one BIG rank (upper-left) + one BIG suit pip (lower-right), so
+// colour and suit read clearly on a small screen — face cards included.
 function phoneCardSVG(card){
   const W = 250, H = 350, col = PHONE_COLOR[card.suit], d = SUIT_PATH[card.suit];
   const label = RANKS[card.rank], fs = label.length === 1 ? 130 : 98;
   const pip = (cx, cy, ps) =>
     `<path transform="translate(${cx} ${cy}) scale(${(ps/32).toFixed(4)}) translate(-16 -16)" fill="${col}" d="${d}"/>`;
-  let s = `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`;
-  s += `<text x="18" y="120" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="${fs}" fill="${col}">${label}</text>`;
-  if (card.rank >= 11){
-    s += pip(58, 188, 96);                                   // court: pip under rank + head
-    const href = `assets/decks/phone/heads/${RANK_NAME[card.rank]}_of_${SUITS[card.suit]}.png`;
-    s += `<image href="${href}" xlink:href="${href}" x="118" y="198" width="126" height="142"/>`;
-  } else {
-    s += pip(162, 226, 176);                                 // number/ace: one huge pip, lower-right
-  }
-  return s + `</svg>`;
+  return `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">` +
+    `<text x="18" y="120" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="${fs}" fill="${col}">${label}</text>` +
+    pip(162, 226, 176) +
+    `</svg>`;
 }
 
 // Minimal CSS fallback face if an SVG asset fails to load.
