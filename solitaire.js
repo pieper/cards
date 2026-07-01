@@ -25,10 +25,18 @@ const SPRING_D      = 24;    // damping     (lower = livelier, higher = stiffer)
 const WIN_IMAGE = {
   prizeOdds: 0.8,           // the game's hard — reward it: mostly glamour, occasional dud
   size: [640, 800],
-  prizeTags:  ["glamour,model,woman", "portrait,woman,fashion", "model,beauty,woman"],
-  randomTags: ["nature,landscape", "city,architecture", "wildlife,animal",
-               "mountain,sunset", "beach,ocean", "flowers,garden", "forest,waterfall"],
+  // IMPORTANT: single tags only. LoremFlickr AND-matches multiple tags, which
+  // shrinks the pool to almost nothing (measured 1 image); one broad tag draws
+  // from a large pool (measured all-distinct). Rotating tags adds more variety.
+  prizeTags:  ["model", "glamour", "fashion", "woman", "portrait", "beauty"],
+  randomTags: ["landscape", "nature", "city", "wildlife", "mountain",
+               "beach", "flowers", "forest", "sunset", "architecture"],
+  puppyTags:  ["puppy", "dog", "labrador", "retriever", "corgi", "beagle"],
 };
+
+// iPad / iPhone (incl. iPadOS 13+ which masquerades as "MacIntel" but has touch).
+const IS_APPLE_TOUCH = /iP(ad|hone|od)/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
 
 /* ----------------------------------------------------------------- model -- */
 
@@ -228,7 +236,6 @@ function newGame(){
     card.el = document.createElement("div");
     card.el.dataset.id = card.id;
     card.el.addEventListener("pointerdown", onPointerDown);
-    card.el.addEventListener("dblclick", onDoubleClick);
     boardEl.appendChild(card.el);
     deck.push(card); G.byId[card.id] = card;
   }
@@ -329,6 +336,7 @@ function boardPoint(e, rect, scale){
 
 function onPointerDown(e){
   if (e.button != null && e.button !== 0) return;
+  if (G.drag) return;                      // one finger at a time — ignore extra touches
   const card = G.byId[e.currentTarget.dataset.id];
   const loc = findCard(card.id);
   if (!loc) return;
@@ -349,7 +357,7 @@ function onPointerDown(e){
   const lead = group[0];
 
   G.drag = {
-    group, src: pile, lead, rect, scale,
+    group, src: pile, lead, rect, scale, pointerId: e.pointerId,
     grabDX: pt.x - lead.home.x, grabDY: pt.y - lead.home.y,
     leadX: lead.home.x, leadY: lead.home.y,
     offsets: group.map(c => ({ c, dx: c.home.x - lead.home.x, dy: c.home.y - lead.home.y })),
@@ -367,7 +375,7 @@ function setGroupPos(drag, lx, ly){
 }
 
 function onPointerMove(e){
-  const d = G.drag; if (!d) return;
+  const d = G.drag; if (!d || e.pointerId !== d.pointerId) return;
   const pt = boardPoint(e, d.rect, d.scale);
   setGroupPos(d, pt.x - d.grabDX, pt.y - d.grabDY);
   d.samples.push({ t: performance.now(), x: pt.x, y: pt.y });
@@ -383,7 +391,7 @@ function releaseVelocity(samples){
 }
 
 function onPointerEnd(e){
-  const d = G.drag; if (!d) return;
+  const d = G.drag; if (!d || e.pointerId !== d.pointerId) return;
   G.drag = null;
   d.group.forEach(c => c.el.classList.remove("dragging"));
 
@@ -432,11 +440,35 @@ function onPointerEnd(e){
     commitMove(d.group, d.src, dst);
     const land = cardXY(dst, dst.cards.length - d.group.length);
     animateGroup(d, land.x, land.y, vx, vy, () => { layout(); afterMove(); });
-  } else {
-    // return home
-    const home = d.lead.home;
-    animateGroup(d, home.x, home.y, vx*0.25, vy*0.25, () => layout());
+    G.lastTap = null;
+    return;
   }
+
+  // No drop target. Was this a tap? (barely moved, quick) — used for double-tap.
+  const first = d.samples[0], lastS = d.samples[d.samples.length - 1];
+  const movedPx = Math.hypot(lastS.x - first.x, lastS.y - first.y) * d.scale;  // screen px
+  const now = performance.now();
+  const isTap = movedPx < 12 && (now - first.t) < 350;
+
+  // Double-tap a single top card sends it UP to the foundation (touch-friendly
+  // replacement for dblclick; works with a mouse too).
+  if (isTap && d.group.length === 1 &&
+      G.lastTap && G.lastTap.id === d.lead.id && (now - G.lastTap.t) < 350){
+    G.lastTap = null;
+    const f = findFoundationFor(d.lead);
+    if (f){
+      pushHistory();
+      commitMove(d.group, d.src, f);
+      d.lead.el.style.zIndex = 3000;
+      const land = cardXY(f, f.cards.length - 1);
+      animateGroup(d, land.x, land.y, 0, 0, () => { layout(); afterMove(); });
+      return;
+    }
+  }
+  G.lastTap = isTap ? { id: d.lead.id, t: now } : null;
+
+  // Otherwise settle back home.
+  animateGroup(d, d.lead.home.x, d.lead.home.y, vx*0.25, vy*0.25, () => layout());
 }
 
 /* ----------------------------------------------------------- spring anim -- */
@@ -487,30 +519,6 @@ function animateGroup(drag, tx, ty, vx, vy, done, fast){
 
 function findFoundationFor(card){
   return G.piles.foundations.find(f => canDropFoundation(card, f)) || null;
-}
-
-// Double-click "suck": send the card UP to its foundation if it can go. Finding
-// tableau plays is part of the game's challenge, so we never do those for you.
-function onDoubleClick(e){
-  const card = G.byId[e.currentTarget.dataset.id];
-  const loc = findCard(card.id);
-  if (!loc || !card.faceUp) return;
-  const { pile, index } = loc;
-  if (index !== pile.cards.length - 1) return;   // only the exposed top card
-
-  const dst = findFoundationFor(card);
-  if (!dst) return;
-
-  pushHistory();
-  const group = [card];
-  const drag = {
-    group, lead: card, leadX: card.home.x, leadY: card.home.y,
-    offsets: [{ c: card, dx: 0, dy: 0 }],
-  };
-  commitMove(group, pile, dst);
-  card.el.style.zIndex = 3000;
-  const land = cardXY(dst, dst.cards.length - 1);
-  animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); afterMove(); });
 }
 
 /* ------------------------------------------------------ autoplay & finish -- */
@@ -617,20 +625,20 @@ const PARAMS = new URLSearchParams(location.search);
 // Build the candidate list: themed source first, then independent fallbacks so a
 // hiccup on one host still yields a picture.
 function winCandidates(){
-  const forced = PARAMS.get("prize");
-  const prize = forced !== null ? forced !== "0" : Math.random() < WIN_IMAGE.prizeOdds;
-  const label = "";
-  if (prize){
-    return [
-      [flickrUrl(pick(WIN_IMAGE.prizeTags)), label],
-      [flickrUrl("woman,model"),             label],
-      [picsumUrl(),                          "random photo"],
-    ];
+  // Choose the tag pool: puppies on iPad/iPhone, else glamour/random by the odds.
+  let pool;
+  if (IS_APPLE_TOUCH && !PARAMS.has("nopups")){
+    pool = WIN_IMAGE.puppyTags;
+  } else {
+    const forced = PARAMS.get("prize");
+    const prize = forced !== null ? forced !== "0" : Math.random() < WIN_IMAGE.prizeOdds;
+    pool = prize ? WIN_IMAGE.prizeTags : WIN_IMAGE.randomTags;
   }
+  // Each candidate re-picks a single tag, so a fallback also uses a fresh tag.
   return [
-    [flickrUrl(pick(WIN_IMAGE.randomTags)), label],
-    [picsumUrl(),                           "random photo"],
-    [flickrUrl(pick(WIN_IMAGE.randomTags)), label],
+    [flickrUrl(pick(pool)), ""],
+    [flickrUrl(pick(pool)), ""],
+    [picsumUrl(),           ""],
   ];
 }
 
@@ -670,14 +678,18 @@ window.addEventListener("resize", () => { fitBoard();
   document.getElementById("stage").style.height =
     (parseFloat(boardEl.style.height) * G.scale + 24) + "px"; });
 
+// localStorage throws in Safari Private mode — never let that break the game.
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
 // Deck picker — remember the choice and re-skin cards live (no re-deal).
 const deckSel = document.getElementById("deck");
-const savedDeck = localStorage.getItem("deck");
+const savedDeck = lsGet("deck");
 if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
 deckSel.value = currentDeck;
 deckSel.addEventListener("change", () => {
   currentDeck = deckSel.value;
-  localStorage.setItem("deck", currentDeck);
+  lsSet("deck", currentDeck);
   eachPile(p => p.cards.forEach(renderCard));
   layout();
 });
