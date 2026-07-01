@@ -215,6 +215,7 @@ function newGame(){
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
   G.turn3PassDone = false;
+  G.passHadPlay = false;
   document.getElementById("drawThree").checked = true;   // every new game starts in turn-3
   document.getElementById("winOverlay").hidden = true;
 
@@ -320,12 +321,15 @@ function drawFromStock(){
     // A recycle means one full pass through the deck is done. If we were in
     // turn-3, that pass is over — drop to turn-1 (easier) for the rest of the
     // game, and sparkle the toggle so the player notices it flip off.
+    // Only drop to turn-1 if the whole pass just made was fruitless — i.e. you
+    // cycled the entire deck without being able to play a single card.
     const t3 = document.getElementById("drawThree");
-    if (t3.checked && !G.turn3PassDone){
+    if (t3.checked && !G.turn3PassDone && !G.passHadPlay){
       G.turn3PassDone = true;
       t3.checked = false;
       sparkleBurst(document.getElementById("turn3label"));
     }
+    G.passHadPlay = false;                     // a fresh pass through the deck begins
     // recycle waste -> stock
     while (waste.cards.length){
       const c = waste.cards.pop(); c.faceUp = false; renderCard(c); stock.cards.push(c);
@@ -351,6 +355,7 @@ function findCard(cardId){
 
 // Move group (array of cards) from src pile to dst pile. Assumes legal.
 function commitMove(group, src, dst){
+  G.passHadPlay = true;                       // a real play happened this deck pass
   group.forEach(() => src.cards.pop());      // remove from end of src
   group.forEach(c => dst.cards.push(c));
   // flip newly exposed tableau card
