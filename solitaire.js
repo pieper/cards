@@ -214,6 +214,8 @@ function newGame(){
   boardEl.innerHTML = "";
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
+  G.turn3PassDone = false;
+  document.getElementById("drawThree").checked = true;   // every new game starts in turn-3
   document.getElementById("winOverlay").hidden = true;
 
   // pile bases
@@ -288,10 +290,42 @@ function undo(){
 
 /* -------------------------------------------------------------- stock draw -- */
 
+// A little celebratory sparkle burst centered on an element.
+function sparkleBurst(target){
+  if (!target) return;
+  const r = target.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const glyphs = ["✨","⭐","💫","✦"];
+  for (let i = 0; i < 9; i++){
+    const s = document.createElement("div");
+    s.className = "sparkle";
+    s.textContent = glyphs[i % glyphs.length];
+    const ang = (Math.PI * 2 * i) / 9 + Math.random() * 0.6;
+    const dist = 26 + Math.random() * 26;
+    s.style.left = cx + "px"; s.style.top = cy + "px";
+    s.style.setProperty("--dx", Math.cos(ang) * dist + "px");
+    s.style.setProperty("--dy", Math.sin(ang) * dist + "px");
+    s.style.animationDelay = Math.floor(Math.random() * 140) + "ms";
+    document.body.appendChild(s);
+    setTimeout(() => s.remove(), 1200);
+  }
+  target.classList.add("flash");
+  setTimeout(() => target.classList.remove("flash"), 1000);
+}
+
 function drawFromStock(){
   const stock = G.piles.stock, waste = G.piles.waste;
   pushHistory();
   if (stock.cards.length === 0){
+    // A recycle means one full pass through the deck is done. If we were in
+    // turn-3, that pass is over — drop to turn-1 (easier) for the rest of the
+    // game, and sparkle the toggle so the player notices it flip off.
+    const t3 = document.getElementById("drawThree");
+    if (t3.checked && !G.turn3PassDone){
+      G.turn3PassDone = true;
+      t3.checked = false;
+      sparkleBurst(document.getElementById("turn3label"));
+    }
     // recycle waste -> stock
     while (waste.cards.length){
       const c = waste.cards.pop(); c.faceUp = false; renderCard(c); stock.cards.push(c);

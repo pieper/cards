@@ -19,7 +19,9 @@ double‑click to send a card up to the foundation, and a little reward on a win
   - **Classic** — Byron Knoll's *Vector Playing Cards* (public domain).
   - **English** — Dmitry Fomin's *English‑pattern* deck (CC0).
   Your choice is remembered between sessions.
-- **Turn‑3** dealing (toggle to turn‑1 in the toolbar).
+- **Turn‑3** dealing (toggle to turn‑1 in the toolbar). Every game starts in
+  turn‑3; after you've gone once through the deck it sparkles and drops to
+  turn‑1 so you can play the game out. A new game resets to turn‑3.
 - **Drag to play** — grab a card or a valid run and drop it on a pile.
 - **Throw‑to‑play physics** — flick a card and let go; if there's a legal move in
   the direction you threw it, the card is pulled there with a damped spring
