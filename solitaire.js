@@ -736,6 +736,18 @@ window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerEnd);
 window.addEventListener("pointercancel", onPointerEnd);
 
+// Kill iOS Safari's edge swipe (back/forward navigation) so throwing a card from
+// the screen edge doesn't yank you off the page. touch-action/overscroll can't
+// stop it — you have to preventDefault the touch that starts in the edge strip.
+const EDGE_GUARD = 26;
+document.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1) return;
+  const x = e.touches[0].clientX;
+  if (x > EDGE_GUARD && x < window.innerWidth - EDGE_GUARD) return;   // not near an edge
+  if (e.target.closest && e.target.closest("#toolbar")) return;       // leave controls alone
+  e.preventDefault();                                                 // suppress the swipe gesture
+}, { passive: false });
+
 document.getElementById("newGame").addEventListener("click", newGame);
 document.getElementById("winNew").addEventListener("click", newGame);
 document.getElementById("undo").addEventListener("click", undo);
