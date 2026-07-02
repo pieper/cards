@@ -254,7 +254,7 @@ function fitBoard(){
 /* ---------------------------------------------------------------- dealing -- */
 
 function newGame(){
-  if (typeof cyc !== "undefined" && cyc){ clearInterval(cyc.timer); cyc = null; setPlayArmed(false); }
+  if (typeof ghost !== "undefined" && ghost) clearGhost();
   boardEl.innerHTML = "";
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
@@ -768,12 +768,13 @@ document.addEventListener("touchstart", (e) => {
   e.preventDefault();                                                 // suppress the swipe gesture
 }, { passive: false });
 
-/* -------------------------------------------------- auto-play move cycler -- */
-// Phone assist: pick a moveable card, highlight ALL its legal destinations, and
-// cycle the card through them (plus a "leave it" stop). Tap the button to drop
-// on the current spot; on "leave" it advances to the next card. Any other action
-// (deal, drag, undo) cancels. Lets you play without dragging fingers over cards.
-let cyc = null;
+/* ------------------------------------------------ ghost-preview move cycler -- */
+// Phone assist, two buttons. "Cycle" steps through every legal move showing a
+// translucent GHOST of the card(s) gliding to that spot — the real cards never
+// move. "Do it" commits the currently-shown ghost move. Any other action (deal,
+// drag, undo) cancels. Lets you play without dragging fingers over the cards.
+let ghost = null;
+let ghostSeq = 0;
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
 
@@ -818,13 +819,6 @@ function makeDrag(group){
     offsets: group.map(c => ({ c, dx: c.home.x - lead.home.x, dy: c.home.y - lead.home.y })) };
 }
 
-function setPlayArmed(on){
-  const b = document.getElementById("playFab");
-  b.textContent = on ? "✓" : "▶";
-  b.classList.toggle("armed", on);
-}
-function clearGlow(){ document.querySelectorAll(".hint,.hint-now").forEach(e => e.classList.remove("hint","hint-now")); }
-
 function playCommit(group, from, to, drag){
   pushHistory();
   let z = 2600; group.forEach(c => c.el.style.zIndex = ++z);
@@ -833,65 +827,77 @@ function playCommit(group, from, to, drag){
   animateGroup(drag || makeDrag(group), land.x, land.y, 0, 0, () => { layout(); afterMove(); });
 }
 
-function enterCard(){
-  clearGlow();
-  layout();                                        // reset any previous preview to home
-  const m = cyc.cards[cyc.ci]; cyc.m = m;
-  cyc.drag = makeDrag(m.group);
-  let z = 2600; m.group.forEach(c => c.el.style.zIndex = ++z);
-  cyc.stops = [{ t: null, x: m.group[0].home.x, y: m.group[0].home.y }];   // "leave it" stop
-  m.targets.forEach(t => { const l = cardXY(t, t.cards.length); cyc.stops.push({ t, x: l.x, y: l.y }); });
-  m.targets.forEach(t => pileTopEl(t).classList.add("hint"));
-  cyc.si = 0; markNow();
-  clearInterval(cyc.timer);
-  cyc.timer = setInterval(hopCycle, 1150);
+// Flat list of every legal move on the board (foundation moves first).
+function buildMoves(){
+  const moves = [];
+  moveableCards().forEach(m => m.targets.forEach(to => moves.push({ group: m.group, from: m.from, to })));
+  return moves;
 }
-function hopCycle(){
-  cyc.si = (cyc.si + 1) % cyc.stops.length;
-  const s = cyc.stops[cyc.si];
-  animateGroup(cyc.drag, s.x, s.y, 0, 0);
-  markNow();
-}
-function markNow(){
+
+function clearGhost(){
+  if (ghost && ghost.nodes) ghost.nodes.forEach(n => n.remove());
   document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
-  const s = cyc.stops[cyc.si];
-  if (s.t) pileTopEl(s.t).classList.add("hint-now");
+  ghost = null;
+}
+function cancelCycle(){ clearGhost(); }            // external interrupts (deal/drag/undo)
+
+// Render the current move as a translucent ghost gliding source → destination.
+function showGhost(){
+  if (ghost.nodes) ghost.nodes.forEach(n => n.remove());
+  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
+  const m = ghost.moves[ghost.gi];
+  const src = m.group[0].home;
+  const dst = cardXY(m.to, m.to.cards.length);
+  const nodes = m.group.map(card => {
+    const el = card.el.cloneNode(true);
+    el.classList.add("ghost"); el.classList.remove("dragging");
+    el.style.zIndex = 4000;
+    boardEl.appendChild(el);
+    return { el, dx: card.home.x - src.x, dy: card.home.y - src.y };
+  });
+  ghost.nodes = nodes.map(n => n.el);
+  pileTopEl(m.to).classList.add("hint-now");
+  const set = (x, y) => nodes.forEach(n => n.el.style.transform = `translate(${x + n.dx}px,${y + n.dy}px)`);
+  set(src.x, src.y);
+  const token = ++ghostSeq; ghost.token = token;
+  let lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
+  const frame = (now) => {
+    if (!ghost || ghost.token !== token) return;   // superseded or cleared
+    let dt = (now - last) / 1000; last = now; if (dt > 0.032) dt = 0.032;
+    vX += (SPRING_K * (dst.x - lx) - SPRING_D * vX) * dt;
+    vY += (SPRING_K * (dst.y - ly) - SPRING_D * vY) * dt;
+    lx += vX * dt; ly += vY * dt;
+    set(lx, ly);
+    if (Math.hypot(dst.x - lx, dst.y - ly) < 0.6 && Math.hypot(vX, vY) < 14){ set(dst.x, dst.y); return; }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
-function playHint(){
-  if (cyc){                                        // second tap → act on current stop
-    const s = cyc.stops[cyc.si];
-    if (s.t){                                      // on a destination → play it
-      const m = cyc.m, drag = cyc.drag, to = s.t;
-      clearInterval(cyc.timer); clearGlow(); cyc = null; setPlayArmed(false);
-      playCommit(m.group, m.from, to, drag);
-    } else {                                       // on "leave" → try the next card
-      cyc.ci = (cyc.ci + 1) % cyc.cards.length;
-      enterCard();
-    }
-    return;
-  }
-  const list = moveableCards();
-  if (!list.length){                               // nothing to do → little shake
-    document.getElementById("playFab").animate(
-      [{transform:"translateX(0)"},{transform:"translateX(-6px)"},{transform:"translateX(6px)"},{transform:"translateX(0)"}],
-      { duration: 220 });
-    return;
-  }
-  if (list.length === 1 && list[0].targets.length === 1){   // exactly one move → just play it
-    const m = list[0]; playCommit(m.group, m.from, m.targets[0]);
-    return;
-  }
-  cyc = { cards: list, ci: 0, timer: null };
-  setPlayArmed(true);
-  enterCard();
+function shake(id){
+  document.getElementById(id).animate(
+    [{transform:"translateX(0)"},{transform:"translateX(-6px)"},{transform:"translateX(6px)"},{transform:"translateX(0)"}],
+    { duration: 220 });
 }
 
-function cancelCycle(){
-  if (!cyc) return;
-  clearInterval(cyc.timer);
-  clearGlow(); cyc = null; setPlayArmed(false);
-  layout();                                        // snap the previewed card home
+// "Cycle" button: begin a session / step to the next legal move.
+function cycleMove(){
+  if (!ghost){
+    const moves = buildMoves();
+    if (!moves.length){ shake("cycleFab"); return; }
+    ghost = { moves, gi: 0, nodes: [], token: 0 };
+  } else {
+    ghost.gi = (ghost.gi + 1) % ghost.moves.length;
+  }
+  showGhost();
+}
+
+// "Do it" button: commit the currently previewed ghost move for real.
+function doMove(){
+  if (!ghost){ shake("doFab"); return; }
+  const m = ghost.moves[ghost.gi];
+  clearGhost();
+  playCommit(m.group, m.from, m.to);
 }
 
 /* ---------------------------------------------------------------- wiring -- */
@@ -899,7 +905,8 @@ function cancelCycle(){
 document.getElementById("newGame").addEventListener("click", startGame);
 document.getElementById("winNew").addEventListener("click", startGame);
 document.getElementById("undo").addEventListener("click", undo);
-document.getElementById("playFab").addEventListener("click", playHint);
+document.getElementById("cycleFab").addEventListener("click", cycleMove);
+document.getElementById("doFab").addEventListener("click", doMove);
 document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
 window.addEventListener("resize", () => { fitBoard();
   document.getElementById("stage").style.height =
