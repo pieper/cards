@@ -9,6 +9,9 @@
 // Geometry (design coordinates; the whole board is scaled to fit the window).
 const CARD_W = 120, CARD_H = 168, PAD = 20, GAP = 18;
 const FACE_UP_OFF = 40, FACE_DOWN_OFF = 18, WASTE_FAN = 32;
+// The Phone deck fans exposed cards farther apart so a covered card still shows
+// its full big rank (the rank sits lower on that card than on the art decks).
+const PHONE_FACE_UP_OFF = 64;
 const TABLEAU_TOP = PAD + CARD_H + 28;
 
 // Throw / animation feel.
@@ -98,8 +101,9 @@ function pileBaseXY(p){
 function cardXY(p, index){
   const base = pileBaseXY(p);
   if (p.type === "tableau"){
+    const upOff = DECKS[currentDeck].type === "phone" ? PHONE_FACE_UP_OFF : FACE_UP_OFF;
     let y = base.y;
-    for (let i = 0; i < index; i++) y += p.cards[i].faceUp ? FACE_UP_OFF : FACE_DOWN_OFF;
+    for (let i = 0; i < index; i++) y += p.cards[i].faceUp ? upOff : FACE_DOWN_OFF;
     return { x: base.x, y };
   }
   if (p.type === "waste"){
@@ -168,7 +172,7 @@ const PHONE_COLOR = ["#111111", "#df0000", "#df0000", "#111111"];   // by suit i
 // colour and suit read clearly on a small screen — face cards included.
 function phoneCardSVG(card){
   const W = 250, H = 350, col = PHONE_COLOR[card.suit], d = SUIT_PATH[card.suit];
-  const label = RANKS[card.rank], fs = label.length === 1 ? 130 : 98;
+  const label = RANKS[card.rank], fs = 130;   // same size for every rank, "10" included
   const pip = (cx, cy, ps) =>
     `<path transform="translate(${cx} ${cy}) scale(${(ps/32).toFixed(4)}) translate(-16 -16)" fill="${col}" d="${d}"/>`;
   return `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">` +
