@@ -136,6 +136,26 @@ body{
 #dealFab:active{transform:scale(.93);background:#0e7d43}
 body.phone-mode #dealFab{display:flex;align-items:center;justify-content:center}
 
+/* "Play a legal move" button, stacked above the deal button. */
+#playFab{
+  display:none;
+  position:fixed;
+  right:calc(16px + env(safe-area-inset-right));
+  bottom:calc(96px + env(safe-area-inset-bottom));
+  width:66px;height:66px;border-radius:50%;
+  border:2px solid #ffffff55;background:#2563eb;color:#fff;
+  font-size:26px;line-height:1;cursor:pointer;z-index:3600;
+  box-shadow:0 5px 16px #0008;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+#playFab.armed{background:#16a34a;font-size:30px}   /* cycling → tap to place */
+#playFab:active{transform:scale(.93)}
+body.phone-mode #playFab{display:flex;align-items:center;justify-content:center}
+
+/* Legal-move highlights while cycling. */
+.hint{outline:3px solid #ffd54a;outline-offset:2px}
+.hint-now{box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0;z-index:60}
+
 /* Install banner (PWA) */
 #installBanner{
   position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));

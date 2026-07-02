@@ -254,6 +254,7 @@ function fitBoard(){
 /* ---------------------------------------------------------------- dealing -- */
 
 function newGame(){
+  if (typeof cyc !== "undefined" && cyc){ clearInterval(cyc.timer); cyc = null; setPlayArmed(false); }
   boardEl.innerHTML = "";
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
@@ -328,6 +329,7 @@ function applySnapshot(snap){
   layout();
 }
 function undo(){
+  cancelCycle();
   if (!G.history.length) return;
   applySnapshot(G.history.pop());
 }
@@ -358,6 +360,7 @@ function sparkleBurst(target){
 }
 
 function drawFromStock(){
+  cancelCycle();
   const stock = G.piles.stock, waste = G.piles.waste;
   pushHistory();
   if (stock.cards.length === 0){
@@ -419,6 +422,7 @@ function boardPoint(e, rect, scale){
 function onPointerDown(e){
   if (e.button != null && e.button !== 0) return;
   if (G.drag) return;                      // one finger at a time — ignore extra touches
+  cancelCycle();                           // touching a card stops the move-cycler
   const card = G.byId[e.currentTarget.dataset.id];
   const loc = findCard(card.id);
   if (!loc) return;
@@ -764,9 +768,138 @@ document.addEventListener("touchstart", (e) => {
   e.preventDefault();                                                 // suppress the swipe gesture
 }, { passive: false });
 
+/* -------------------------------------------------- auto-play move cycler -- */
+// Phone assist: pick a moveable card, highlight ALL its legal destinations, and
+// cycle the card through them (plus a "leave it" stop). Tap the button to drop
+// on the current spot; on "leave" it advances to the next card. Any other action
+// (deal, drag, undo) cancels. Lets you play without dragging fingers over cards.
+let cyc = null;
+
+const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
+
+function legalTargets(group, from){
+  const ts = [];
+  let emptyFoundationAdded = false;
+  G.piles.foundations.forEach(f => {
+    if (f === from || !canDrop(group, f)) return;
+    if (f.cards.length === 0){ if (emptyFoundationAdded) return; emptyFoundationAdded = true; } // empties are equivalent
+    ts.push(f);
+  });
+  let emptyColAdded = false;
+  G.piles.tableau.forEach(t => {
+    if (t === from || !canDrop(group, t)) return;
+    if (t.cards.length === 0){ if (emptyColAdded) return; emptyColAdded = true; }  // empty columns are equivalent
+    ts.push(t);
+  });
+  return ts;
+}
+
+function moveableCards(){
+  const out = [];
+  const w = topCard(G.piles.waste);
+  if (w){ const ts = legalTargets([w], G.piles.waste); if (ts.length) out.push({ group:[w], from:G.piles.waste, targets:ts }); }
+  G.piles.tableau.forEach(p => {
+    for (let i = 0; i < p.cards.length; i++){
+      const c = p.cards[i];
+      if (!c.faceUp) continue;
+      const group = p.cards.slice(i);
+      if (!isValidRun(group)) continue;
+      let ts = legalTargets(group, p);
+      if (i === 0) ts = ts.filter(t => !(t.type === "tableau" && t.cards.length === 0)); // skip pointless whole-pile → empty
+      if (ts.length) out.push({ group, from:p, targets:ts });
+    }
+  });
+  return out;
+}
+
+function makeDrag(group){
+  const lead = group[0];
+  return { group, lead, leadX: lead.home.x, leadY: lead.home.y,
+    offsets: group.map(c => ({ c, dx: c.home.x - lead.home.x, dy: c.home.y - lead.home.y })) };
+}
+
+function setPlayArmed(on){
+  const b = document.getElementById("playFab");
+  b.textContent = on ? "✓" : "▶";
+  b.classList.toggle("armed", on);
+}
+function clearGlow(){ document.querySelectorAll(".hint,.hint-now").forEach(e => e.classList.remove("hint","hint-now")); }
+
+function playCommit(group, from, to, drag){
+  pushHistory();
+  let z = 2600; group.forEach(c => c.el.style.zIndex = ++z);
+  commitMove(group, from, to);
+  const land = cardXY(to, to.cards.length - group.length);
+  animateGroup(drag || makeDrag(group), land.x, land.y, 0, 0, () => { layout(); afterMove(); });
+}
+
+function enterCard(){
+  clearGlow();
+  layout();                                        // reset any previous preview to home
+  const m = cyc.cards[cyc.ci]; cyc.m = m;
+  cyc.drag = makeDrag(m.group);
+  let z = 2600; m.group.forEach(c => c.el.style.zIndex = ++z);
+  cyc.stops = [{ t: null, x: m.group[0].home.x, y: m.group[0].home.y }];   // "leave it" stop
+  m.targets.forEach(t => { const l = cardXY(t, t.cards.length); cyc.stops.push({ t, x: l.x, y: l.y }); });
+  m.targets.forEach(t => pileTopEl(t).classList.add("hint"));
+  cyc.si = 0; markNow();
+  clearInterval(cyc.timer);
+  cyc.timer = setInterval(hopCycle, 1150);
+}
+function hopCycle(){
+  cyc.si = (cyc.si + 1) % cyc.stops.length;
+  const s = cyc.stops[cyc.si];
+  animateGroup(cyc.drag, s.x, s.y, 0, 0);
+  markNow();
+}
+function markNow(){
+  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
+  const s = cyc.stops[cyc.si];
+  if (s.t) pileTopEl(s.t).classList.add("hint-now");
+}
+
+function playHint(){
+  if (cyc){                                        // second tap → act on current stop
+    const s = cyc.stops[cyc.si];
+    if (s.t){                                      // on a destination → play it
+      const m = cyc.m, drag = cyc.drag, to = s.t;
+      clearInterval(cyc.timer); clearGlow(); cyc = null; setPlayArmed(false);
+      playCommit(m.group, m.from, to, drag);
+    } else {                                       // on "leave" → try the next card
+      cyc.ci = (cyc.ci + 1) % cyc.cards.length;
+      enterCard();
+    }
+    return;
+  }
+  const list = moveableCards();
+  if (!list.length){                               // nothing to do → little shake
+    document.getElementById("playFab").animate(
+      [{transform:"translateX(0)"},{transform:"translateX(-6px)"},{transform:"translateX(6px)"},{transform:"translateX(0)"}],
+      { duration: 220 });
+    return;
+  }
+  if (list.length === 1 && list[0].targets.length === 1){   // exactly one move → just play it
+    const m = list[0]; playCommit(m.group, m.from, m.targets[0]);
+    return;
+  }
+  cyc = { cards: list, ci: 0, timer: null };
+  setPlayArmed(true);
+  enterCard();
+}
+
+function cancelCycle(){
+  if (!cyc) return;
+  clearInterval(cyc.timer);
+  clearGlow(); cyc = null; setPlayArmed(false);
+  layout();                                        // snap the previewed card home
+}
+
+/* ---------------------------------------------------------------- wiring -- */
+
 document.getElementById("newGame").addEventListener("click", startGame);
 document.getElementById("winNew").addEventListener("click", startGame);
 document.getElementById("undo").addEventListener("click", undo);
+document.getElementById("playFab").addEventListener("click", playHint);
 document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
 window.addEventListener("resize", () => { fitBoard();
   document.getElementById("stage").style.height =
@@ -795,6 +928,7 @@ const updatePhoneMode = () =>
 updatePhoneMode();
 
 deckSel.addEventListener("change", () => {
+  cancelCycle();
   currentDeck = deckSel.value;
   lsSet("deck", currentDeck);
   updatePhoneMode();
