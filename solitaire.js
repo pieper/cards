@@ -786,9 +786,18 @@ if (forcedDeck && DECKS[forcedDeck]) currentDeck = forcedDeck;   // ?deck=phone|
 else if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
 else if (IS_PHONE_SCREEN) currentDeck = "phone";
 deckSel.value = currentDeck;
+
+// "Phone mode" (Phone deck): show the thumb-reach deal button.
+const dealFab = document.getElementById("dealFab");
+dealFab.addEventListener("click", drawFromStock);
+const updatePhoneMode = () =>
+  document.body.classList.toggle("phone-mode", currentDeck === "phone");
+updatePhoneMode();
+
 deckSel.addEventListener("change", () => {
   currentDeck = deckSel.value;
   lsSet("deck", currentDeck);
+  updatePhoneMode();
   eachPile(p => p.cards.forEach(renderCard));
   layout();
 });

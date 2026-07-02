@@ -18,7 +18,10 @@ body{
 
 #toolbar{
   display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;
-  padding:.5rem .9rem;
+  /* Pad past the iOS status bar / notch (env insets are 0 on other devices).
+     The bar's dark background fills the inset area, so the clock sits on it. */
+  padding:calc(.5rem + env(safe-area-inset-top)) calc(.9rem + env(safe-area-inset-right))
+          .5rem calc(.9rem + env(safe-area-inset-left));
   background:rgba(0,0,0,.28);
   box-shadow:0 2px 8px rgba(0,0,0,.35);
 }
@@ -116,6 +119,22 @@ body{
   font-size:46px;font-weight:700;opacity:.92;
 }
 .card .center-suit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:54px}
+
+/* Floating "deal" button — phone mode only, reachable by thumb (lower-right).
+   Taps the stock (deal 3 / recycle) without reaching up to the deck. */
+#dealFab{
+  display:none;
+  position:fixed;
+  right:calc(16px + env(safe-area-inset-right));
+  bottom:calc(18px + env(safe-area-inset-bottom));
+  width:66px;height:66px;border-radius:50%;
+  border:2px solid #ffffff55;background:#0b6e3b;color:#fff;
+  font-size:30px;line-height:1;cursor:pointer;z-index:3600;
+  box-shadow:0 5px 16px #0008;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+#dealFab:active{transform:scale(.93);background:#0e7d43}
+body.phone-mode #dealFab{display:flex;align-items:center;justify-content:center}
 
 /* Install banner (PWA) */
 #installBanner{
