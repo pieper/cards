@@ -11,7 +11,7 @@ const CARD_W = 120, CARD_H = 168, PAD = 20, GAP = 18;
 const FACE_UP_OFF = 40, FACE_DOWN_OFF = 18, WASTE_FAN = 32;
 // The Phone deck fans exposed cards farther apart so a covered card still shows
 // its full big rank (the rank sits lower on that card than on the art decks).
-const PHONE_FACE_UP_OFF = 64;
+const PHONE_FACE_UP_OFF = 68;
 const TABLEAU_TOP = PAD + CARD_H + 28;
 
 // Throw / animation feel.
@@ -170,14 +170,15 @@ const SUIT_PATH = [
 const PHONE_COLOR = ["#111111", "#df0000", "#df0000", "#111111"];   // by suit index
 // Every card: one BIG rank (upper-left) + one BIG suit pip (lower-right), so
 // colour and suit read clearly on a small screen — face cards included.
+// The pip is a <g class="bigpip"> centred at the SVG origin; CSS positions/sizes
+// it (big lower-right normally, up beside the rank when the card is covered) and
+// transitions between the two, so the colour stays readable in a fanned stack.
 function phoneCardSVG(card){
-  const W = 250, H = 350, col = PHONE_COLOR[card.suit], d = SUIT_PATH[card.suit];
-  const label = RANKS[card.rank], fs = 130;   // same size for every rank, "10" included
-  const pip = (cx, cy, ps) =>
-    `<path transform="translate(${cx} ${cy}) scale(${(ps/32).toFixed(4)}) translate(-16 -16)" fill="${col}" d="${d}"/>`;
-  return `<svg class="cardsvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">` +
-    `<text x="18" y="120" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="${fs}" fill="${col}">${label}</text>` +
-    pip(162, 226, 176) +
+  const col = PHONE_COLOR[card.suit], d = SUIT_PATH[card.suit];
+  const label = RANKS[card.rank];
+  return `<svg class="cardsvg" viewBox="0 0 250 350" xmlns="http://www.w3.org/2000/svg">` +
+    `<text x="18" y="120" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="130" fill="${col}">${label}</text>` +
+    `<g class="bigpip"><path transform="translate(-16 -16)" fill="${col}" d="${d}"/></g>` +
     `</svg>`;
 }
 
@@ -189,6 +190,12 @@ function textFace(card){
          `<div class="center-suit">${sym}</div>`;
 }
 
+// A face-up tableau card is "covered" when another card sits on top of it.
+function cardCovered(card){
+  const loc = findCard(card.id);
+  return !!loc && loc.pile.type === "tableau" && loc.index < loc.pile.cards.length - 1;
+}
+
 function renderCard(card){
   const el = card.el;
   el.style.width = CARD_W + "px"; el.style.height = CARD_H + "px";
@@ -197,6 +204,7 @@ function renderCard(card){
   el.className = `card face ${colorOf(card.suit)}`;
   if (DECKS[currentDeck].type === "phone"){
     el.innerHTML = phoneCardSVG(card);
+    el.classList.toggle("covered", cardCovered(card));   // correct at creation → no anim
     return;
   }
   const img = new Image();
@@ -220,6 +228,10 @@ function layout(){
       const { x, y } = cardXY(p, i);
       card.home = { x, y };
       place(card, x, y, ++z);
+      // A tableau card with something stacked on it is "covered" → pip slides up.
+      // Elements that persist across the move animate; freshly rendered ones were
+      // already set correctly in renderCard, so this is a no-op for them.
+      card.el.classList.toggle("covered", p.type === "tableau" && i < p.cards.length - 1);
       maxBottom = Math.max(maxBottom, y + CARD_H);
     });
   });
@@ -752,8 +764,8 @@ document.addEventListener("touchstart", (e) => {
   e.preventDefault();                                                 // suppress the swipe gesture
 }, { passive: false });
 
-document.getElementById("newGame").addEventListener("click", newGame);
-document.getElementById("winNew").addEventListener("click", newGame);
+document.getElementById("newGame").addEventListener("click", startGame);
+document.getElementById("winNew").addEventListener("click", startGame);
 document.getElementById("undo").addEventListener("click", undo);
 document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
 window.addEventListener("resize", () => { fitBoard();
@@ -781,7 +793,66 @@ deckSel.addEventListener("change", () => {
   layout();
 });
 
-newGame();
+/* ---------------------------------------------------- PWA: install + offline -- */
+
+// Register the service worker (enables offline / airplane-mode play).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+
+let deferredInstall = null;
+const isStandalone = () =>
+  matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () =>
+  /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);   // iPadOS reports as Mac
+
+const installBanner = document.getElementById("installBanner");
+const installBtn = document.getElementById("installBtn");
+const installMsg = document.getElementById("installMsg");
+
+// Chrome/Android: stash the prompt so we can trigger it from our own button.
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  maybeShowInstall(parseInt(lsGet("games") || "0", 10));
+});
+window.addEventListener("appinstalled", () => { installBanner.hidden = true; lsSet("installDismissed", "1"); });
+
+document.getElementById("installClose").addEventListener("click", () => {
+  installBanner.hidden = true; lsSet("installDismissed", "1");
+});
+installBtn.addEventListener("click", async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  try { await deferredInstall.userChoice; } catch {}
+  deferredInstall = null;
+  installBanner.hidden = true; lsSet("installDismissed", "1");
+});
+
+// Offer to install only once the player has come back for a 2nd+ game.
+function maybeShowInstall(games){
+  if (isStandalone() || lsGet("installDismissed") || (games || 0) < 2) return;
+  if (deferredInstall){                                   // Android/Chrome: real button
+    installMsg.textContent = "Install Solitaire for full-screen, offline play?";
+    installBtn.hidden = false;
+    installBanner.hidden = false;
+  } else if (isIOS()){                                    // iOS: manual, so show how
+    installMsg.innerHTML = "Add to your Home Screen: tap <b>Share</b> → <b>Add to Home Screen</b> (plays offline).";
+    installBtn.hidden = true;
+    installBanner.hidden = false;
+  }
+}
+
+// Every game start bumps the counter and reconsiders the install offer.
+function startGame(){
+  newGame();
+  const n = (parseInt(lsGet("games") || "0", 10) || 0) + 1;
+  lsSet("games", String(n));
+  maybeShowInstall(n);
+}
+
+startGame();
 
 // Quick win-screen test: load with ?win (optionally + ?prize / ?prize=0).
 if (PARAMS.has("win")) showWin();

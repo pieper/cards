@@ -88,6 +88,16 @@ body{
   pointer-events:none;-webkit-user-drag:none;user-select:none;
 }
 
+/* Phone deck: the suit pip. Big & lower-right when the card is fully visible;
+   slides up beside the rank (and shrinks) when the card is covered in a fan, so
+   red/black stays readable. transform-box:view-box → translate is in SVG units. */
+.cardsvg .bigpip{
+  transform-box:view-box; transform-origin:0 0;
+  transform:translate(162px,226px) scale(5.5);
+  transition:transform .26s ease;
+}
+.card.covered .cardsvg .bigpip{ transform:translate(206px,73px) scale(2.6); }
+
 .card .corner{
   position:absolute;display:flex;flex-direction:column;align-items:center;
   line-height:1;font-weight:700;
@@ -106,6 +116,20 @@ body{
   font-size:46px;font-weight:700;opacity:.92;
 }
 .card .center-suit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:54px}
+
+/* Install banner (PWA) */
+#installBanner{
+  position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:.6rem;z-index:4000;
+  padding:.7rem .9rem;border-radius:12px;
+  background:#10261a;border:1px solid #ffffff22;box-shadow:0 8px 24px #0007;
+  font-size:.9rem;
+}
+#installBanner[hidden]{display:none}
+#installMsg{flex:1;line-height:1.3}
+#installBanner button{font:inherit;border:none;border-radius:8px;cursor:pointer}
+#installBtn{background:#16a34a;color:#fff;font-weight:600;padding:.4rem .9rem}
+#installClose{background:#ffffff1a;color:#fff;padding:.4rem .6rem}
 
 /* card back */
 .card.back{
