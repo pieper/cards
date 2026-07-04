@@ -1,5 +1,7 @@
 /* Service worker: offline play (airplane mode) + fresh updates when online. */
-const CACHE = "cards-v1";
+// __BUILD__ is replaced with the commit SHA at deploy time so every release is a
+// new service worker → the browser picks it up and the page auto-reloads.
+const CACHE = "cards-__BUILD__";
 
 // App shell precached on install. The Phone deck draws in JS (no card files), so
 // the shell alone is enough to play fully offline; art-deck SVGs are cached at

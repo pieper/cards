@@ -239,6 +239,7 @@ function layout(){
   boardEl.style.height = (maxBottom + PAD) + "px";
   fitBoard();
   updateStatus();
+  if (typeof saveGame === "function") saveGame();
 }
 
 function fitBoard(){
@@ -327,6 +328,28 @@ function applySnapshot(snap){
   snap.tableau.forEach((a,i) => load(G.piles.tableau[i], a));
   eachPile(p => p.cards.forEach(renderCard));
   layout();
+}
+
+// Persist the in-progress game so closing/reloading/updating resumes seamlessly.
+function saveGame(){
+  try {
+    const snap = snapshot();
+    snap.draw3 = document.getElementById("drawThree").checked;
+    snap.deck = currentDeck;
+    localStorage.setItem("save", JSON.stringify(snap));
+  } catch {}
+}
+function tryRestore(){
+  let snap = null;
+  try { snap = JSON.parse(localStorage.getItem("save") || "null"); } catch {}
+  if (!snap || !snap.tableau) return false;
+  if ((snap.foundations || []).reduce((n,a) => n + a.length, 0) >= 52) return false; // finished game
+  if (!forcedDeck && snap.deck && DECKS[snap.deck]) currentDeck = snap.deck;
+  newGame();                                        // build card elements (its deal is overridden below)
+  if (typeof snap.draw3 === "boolean") document.getElementById("drawThree").checked = snap.draw3;
+  deckSel.value = currentDeck; updatePhoneMode();
+  applySnapshot(snap);
+  return true;
 }
 function undo(){
   cancelCycle();
@@ -735,6 +758,7 @@ async function showWin(){
   overlay.hidden = false;
   wrap.innerHTML = '<div class="spinner"></div>';
   cap.textContent = "";
+  try { localStorage.removeItem("save"); } catch {}   // finished game — don't resume it
 
   for (const [url, label] of winCandidates()){
     try {
@@ -945,9 +969,25 @@ deckSel.addEventListener("change", () => {
 
 /* ---------------------------------------------------- PWA: install + offline -- */
 
-// Register the service worker (enables offline / airplane-mode play).
+// Register the service worker (offline play) and keep the app up to date: each
+// deploy is a new SW, and when it takes control we reload once to pick up the
+// latest code. The in-progress game is saved, so the reload is seamless — this
+// fixes the "home-screen app shows an old version" problem on iOS.
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;   // don't reload on the very first install
+    reloading = true;
+    location.reload();
+  });
+  const checkForUpdate = () =>
+    navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {});
+  window.addEventListener("load", () =>
+    navigator.serviceWorker.register("sw.js").then(checkForUpdate).catch(() => {}));
+  document.addEventListener("visibilitychange", () => {   // re-check when the app is reopened
+    if (document.visibilityState === "visible") checkForUpdate();
+  });
 }
 
 let deferredInstall = null;
@@ -1002,7 +1042,9 @@ function startGame(){
   maybeShowInstall(n);
 }
 
-startGame();
+// Resume an in-progress game if one was saved; otherwise deal a fresh one.
+if (tryRestore()) maybeShowInstall(parseInt(lsGet("games") || "0", 10));
+else startGame();
 
 // Quick win-screen test: load with ?win (optionally + ?prize / ?prize=0).
 if (PARAMS.has("win")) showWin();
