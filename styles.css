@@ -49,7 +49,7 @@ body{
   100%{ transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(1.3) rotate(160deg); opacity:0 }
 }
 #turn3label{padding:.15rem .35rem;border-radius:6px}
-#turn3label.flash{animation:turn3Flash 1s ease-in-out}
+.flash{animation:turn3Flash 1s ease-in-out}
 @keyframes turn3Flash{
   0%,100%{ box-shadow:none;background:transparent }
   40%{ box-shadow:0 0 0 2px gold,0 0 14px gold;background:#ffd7001f }

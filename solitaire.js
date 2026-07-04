@@ -261,6 +261,7 @@ function newGame(){
   G.byId = {}; G.history = []; G.winShown = false;
   G.turn3PassDone = false;
   G.passHadPlay = false;
+  G.stuckNotified = false;
   document.getElementById("drawThree").checked = true;   // every new game starts in turn-3
   document.getElementById("winOverlay").hidden = true;
 
@@ -397,6 +398,10 @@ function drawFromStock(){
       G.turn3PassDone = true;
       t3.checked = false;
       sparkleBurst(document.getElementById("turn3label"));
+    } else if (!t3.checked && !G.stuckNotified && isStuck()){
+      // Already in turn-1 and there's genuinely nothing left to do → nudge New Game.
+      G.stuckNotified = true;
+      sparkleBurst(document.getElementById("newGame"));
     }
     G.passHadPlay = false;                     // a fresh pass through the deck begins
     // recycle waste -> stock
@@ -425,6 +430,7 @@ function findCard(cardId){
 // Move group (array of cards) from src pile to dst pile. Assumes legal.
 function commitMove(group, src, dst){
   G.passHadPlay = true;                       // a real play happened this deck pass
+  G.stuckNotified = false;                    // progress made — allow a future stuck nudge
   group.forEach(() => src.cards.pop());      // remove from end of src
   group.forEach(c => dst.cards.push(c));
   // flip newly exposed tableau card
@@ -829,8 +835,16 @@ function moveableCards(){
       if (!c.faceUp) continue;
       const group = p.cards.slice(i);
       if (!isValidRun(group)) continue;
-      let ts = legalTargets(group, p);
-      if (i === 0) ts = ts.filter(t => !(t.type === "tableau" && t.cards.length === 0)); // skip pointless whole-pile → empty
+      // Keep foundation moves, and only tableau moves that ACCOMPLISH something:
+      // reveal a face-down card, or empty this column. Drop pure lateral shuffles
+      // (moving a face-up run onto another stack with nothing gained).
+      const exposesDown = i > 0 && !p.cards[i - 1].faceUp;
+      const ts = legalTargets(group, p).filter(t => {
+        if (t.type !== "tableau") return true;             // → foundation: always productive
+        if (exposesDown) return true;                      // reveals a face-down card
+        if (i === 0) return t.cards.length > 0;            // empties this column onto another pile
+        return false;                                      // sub-run shuffle over a face-up card: pointless
+      });
       if (ts.length) out.push({ group, from:p, targets:ts });
     }
   });
@@ -856,6 +870,16 @@ function buildMoves(){
   const moves = [];
   moveableCards().forEach(m => m.targets.forEach(to => moves.push({ group: m.group, from: m.from, to })));
   return moves;
+}
+
+// Stuck = no productive board move AND no stock/waste card can be played anywhere
+// (so cycling the deck won't help either).
+function isStuck(){
+  if (buildMoves().length) return false;
+  const deck = G.piles.stock.cards.concat(G.piles.waste.cards);
+  return !deck.some(c =>
+    G.piles.foundations.some(f => canDropFoundation(c, f)) ||
+    G.piles.tableau.some(t => canDropTableau(c, t)));
 }
 
 function clearGhost(){
