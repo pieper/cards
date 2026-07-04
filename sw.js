@@ -7,10 +7,10 @@ const CACHE = "cards-__BUILD__";
 // the shell alone is enough to play fully offline; art-deck SVGs are cached at
 // runtime the first time you view them online.
 const SHELL = [
-  "./", "index.html", "styles.css", "solitaire.js", "manifest.webmanifest",
+  "./", "index.html", "styles.css", "solitaire.js", "winprob.worker.js", "manifest.webmanifest",
   "assets/icons/icon-192.png", "assets/icons/icon-512.png", "assets/icons/apple-touch-icon.png",
 ];
-const SHELL_BASENAMES = ["index.html", "styles.css", "solitaire.js", "manifest.webmanifest"];
+const SHELL_BASENAMES = ["index.html", "styles.css", "solitaire.js", "winprob.worker.js", "manifest.webmanifest"];
 const isShell = p => SHELL_BASENAMES.includes(p.split("/").pop());
 
 self.addEventListener("install", (e) => {

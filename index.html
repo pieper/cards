@@ -30,12 +30,15 @@
         <option value="phone">Phone</option>
       </select>
     </label>
+    <label class="toggle"><input type="checkbox" id="oddsToggle"> Odds</label>
     <span id="status"></span>
   </header>
 
   <div id="stage">
     <div id="board"></div>
   </div>
+
+  <canvas id="winchart" title="Estimated win chance — expected (line) with optimistic/pessimistic band"></canvas>
 
   <button id="cycleFab" class="fab" aria-label="Cycle legal moves">»</button>
   <button id="doFab" class="fab" aria-label="Do the previewed move">▶</button>

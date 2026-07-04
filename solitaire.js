@@ -240,6 +240,7 @@ function layout(){
   fitBoard();
   updateStatus();
   if (typeof saveGame === "function") saveGame();
+  if (typeof scheduleWinProb === "function") scheduleWinProb();
 }
 
 function fitBoard(){
@@ -262,6 +263,8 @@ function newGame(){
   G.turn3PassDone = false;
   G.passHadPlay = false;
   G.stuckNotified = false;
+  G.winHistory = [];
+  if (typeof resetWin === "function") resetWin();
   document.getElementById("drawThree").checked = true;   // every new game starts in turn-3
   document.getElementById("winOverlay").hidden = true;
 
@@ -337,6 +340,7 @@ function saveGame(){
     const snap = snapshot();
     snap.draw3 = document.getElementById("drawThree").checked;
     snap.deck = currentDeck;
+    snap.win = G.winHistory || [];
     localStorage.setItem("save", JSON.stringify(snap));
   } catch {}
 }
@@ -350,6 +354,8 @@ function tryRestore(){
   if (typeof snap.draw3 === "boolean") document.getElementById("drawThree").checked = snap.draw3;
   deckSel.value = currentDeck; updatePhoneMode();
   applySnapshot(snap);
+  G.winHistory = Array.isArray(snap.win) ? snap.win : [];
+  if (typeof drawWinChart === "function") drawWinChart();
   return true;
 }
 function undo(){
@@ -1067,6 +1073,92 @@ function startGame(){
   lsSet("games", String(n));
   maybeShowInstall(n);
 }
+
+/* ----------------------------------------------------- win-probability chart -- */
+// Estimate the position's win chance in a Web Worker (determinized greedy
+// rollouts) and plot it as a strip: expected line + optimistic/pessimistic band.
+let winWorker = null, winSeq = 0, lastPub = "", winTimer = 0;
+const winCanvas = document.getElementById("winchart");
+const oddsToggle = document.getElementById("oddsToggle");
+const oddsOn = () => oddsToggle.checked;
+try { winWorker = new Worker("winprob.worker.js"); } catch { winWorker = null; }
+if (winWorker){
+  winWorker.onerror = () => { winWorker = null; drawWinChart(); };   // worker unavailable → no chart
+  winWorker.onmessage = (e) => {
+    if (e.data.id !== winSeq) return;                  // ignore stale results
+    (G.winHistory = G.winHistory || []).push({ low: e.data.low, mid: e.data.mid, high: e.data.high });
+    if (G.winHistory.length > 400) G.winHistory.shift();
+    drawWinChart();
+  };
+}
+
+function winPub(){
+  const found = [[],[],[],[]];
+  G.piles.foundations.forEach(p => p.cards.forEach(c => found[c.suit].push(c.id)));
+  return {
+    draw: document.getElementById("drawThree").checked ? 3 : 1,
+    up:   G.piles.tableau.map(t => t.cards.filter(c => c.faceUp).map(c => c.id)),
+    waste: G.piles.waste.cards.map(c => c.id),
+    found,
+    down: G.piles.tableau.map(t => t.cards.filter(c => !c.faceUp).length),
+    stockN: G.piles.stock.cards.length,
+  };
+}
+function requestWinProb(){
+  if (!winWorker || !oddsOn()) return;
+  const pub = winPub();
+  if (pub.found.reduce((n,a)=>n+a.length,0) === 52) return;   // already won
+  const key = JSON.stringify(pub);
+  if (key === lastPub) return;                          // position unchanged
+  lastPub = key;
+  winWorker.postMessage({ id: ++winSeq, pub, N: 48 });
+}
+function scheduleWinProb(){
+  if (!winWorker || !oddsOn()) return;
+  clearTimeout(winTimer);
+  winTimer = setTimeout(requestWinProb, 250);
+}
+function resetWin(){ G.winHistory = []; lastPub = ""; drawWinChart(); }
+
+function drawWinChart(){
+  const cv = winCanvas; if (!cv) return;
+  if (!oddsOn()){ cv.style.display = "none"; return; }
+  cv.style.display = "block";
+  const cssW = cv.clientWidth || 320, cssH = 66, dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cssW, H = cssH;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#0a3d22"; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#ffffff22"; ctx.lineWidth = 1;
+  for (const g of [0.25, 0.5, 0.75]){ const y = H - g*H; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const raw = G.winHistory || [];
+  const hist = raw.length === 1 ? [raw[0], raw[0]] : raw;
+  const n = hist.length;
+  if (n >= 2){
+    const X = i => (i / (n - 1)) * W, Y = p => H - p * H;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].high); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    for (let i = n - 1; i >= 0; i--){ ctx.lineTo(X(i), Y(hist[i].low)); }
+    ctx.closePath(); ctx.fillStyle = "#ffd54a33"; ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].mid); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.stroke();
+    const cur = raw[raw.length - 1];
+    ctx.fillStyle = "#eafff1"; ctx.font = "600 12px -apple-system,Arial,sans-serif"; ctx.textAlign = "left";
+    ctx.fillText(`win ≈ ${Math.round(cur.mid*100)}%  ( ${Math.round(cur.low*100)}–${Math.round(cur.high*100)} )`, 8, 15);
+  }
+}
+
+oddsToggle.checked = (lsGet("odds") ?? "1") === "1";          // default on, remembered
+oddsToggle.addEventListener("change", () => {
+  lsSet("odds", oddsToggle.checked ? "1" : "0");
+  if (oddsToggle.checked){ lastPub = ""; requestWinProb(); }
+  drawWinChart();
+});
+window.addEventListener("resize", drawWinChart);
 
 // Resume an in-progress game if one was saved; otherwise deal a fresh one.
 if (tryRestore()) maybeShowInstall(parseInt(lsGet("games") || "0", 10));

@@ -55,6 +55,10 @@ body{
   40%{ box-shadow:0 0 0 2px gold,0 0 14px gold;background:#ffd7001f }
 }
 
+/* Win-probability strip chart (toggled by "Odds"). */
+#winchart{display:none;width:min(96vw,860px);height:66px;margin:2px auto 12px;
+  border-radius:9px;background:#0a3d22;box-shadow:0 1px 4px #0005}
+
 #stage{padding:18px 0;display:flex;justify-content:center}
 #board{position:relative;transform-origin:top left}
 
