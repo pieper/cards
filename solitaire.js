@@ -872,10 +872,20 @@ function buildMoves(){
   return moves;
 }
 
-// Stuck = no productive board move AND no stock/waste card can be played anywhere
-// (so cycling the deck won't help either).
+// Genuinely over = NO legal move remains at all. Unlike the suggester, this
+// counts every legal move — including lateral shuffles it normally hides, and
+// any stock/waste card that could still be played on a later pass (so a play the
+// player skipped while going through the deck keeps the game "not over").
 function isStuck(){
-  if (buildMoves().length) return false;
+  const w = topCard(G.piles.waste);
+  if (w && legalTargets([w], G.piles.waste).length) return false;
+  for (const p of G.piles.tableau){
+    for (let i = 0; i < p.cards.length; i++){
+      if (!p.cards[i].faceUp) continue;
+      const group = p.cards.slice(i);
+      if (isValidRun(group) && legalTargets(group, p).length) return false;
+    }
+  }
   const deck = G.piles.stock.cards.concat(G.piles.waste.cards);
   return !deck.some(c =>
     G.piles.foundations.some(f => canDropFoundation(c, f)) ||
