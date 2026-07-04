@@ -872,22 +872,14 @@ function buildMoves(){
   return moves;
 }
 
-// Genuinely over = NO legal move remains at all. Unlike the suggester, this
-// counts every legal move — including lateral shuffles it normally hides, and
-// any stock/waste card that could still be played on a later pass (so a play the
-// player skipped while going through the deck keeps the game "not over").
+// Stuck = no PRODUCTIVE move remains. If there's a productive play the player
+// simply hasn't made — a real board move, or any stock/waste card still playable
+// (incl. one they skipped while going through the deck) — the game isn't over,
+// so we stay quiet. Pointless lateral shuffles don't count as productive.
 function isStuck(){
-  const w = topCard(G.piles.waste);
-  if (w && legalTargets([w], G.piles.waste).length) return false;
-  for (const p of G.piles.tableau){
-    for (let i = 0; i < p.cards.length; i++){
-      if (!p.cards[i].faceUp) continue;
-      const group = p.cards.slice(i);
-      if (isValidRun(group) && legalTargets(group, p).length) return false;
-    }
-  }
+  if (buildMoves().length) return false;                 // a productive board move is available
   const deck = G.piles.stock.cards.concat(G.piles.waste.cards);
-  return !deck.some(c =>
+  return !deck.some(c =>                                  // any deck card still playable somewhere
     G.piles.foundations.some(f => canDropFoundation(c, f)) ||
     G.piles.tableau.some(t => canDropTableau(c, t)));
 }
