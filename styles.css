@@ -147,6 +147,9 @@ body.phone-mode .fab{display:flex}
 
 /* Ghost preview of a move + its destination highlight. */
 .card.ghost{opacity:.5;pointer-events:none;outline:3px dashed #ffd54a;outline-offset:1px}
+/* Tap-to-play teaser: a touch brighter and lifted, so the leaning ghost stands
+   out over the (statically) glowing destinations while it hunts between them. */
+.card.ghost.tease{opacity:.66;outline-color:#ffe27a;box-shadow:0 6px 16px rgba(0,0,0,.4)}
 .hint-now{box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0;z-index:60}
 
 /* Install banner (PWA) */

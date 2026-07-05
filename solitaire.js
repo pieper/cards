@@ -840,6 +840,7 @@ document.addEventListener("touchstart", (e) => {
 let ghost = null;
 let ghostSeq = 0;
 let pickMode = null;   // tap-to-play: destinations lit up, waiting for the pick
+let pickSeq = 0;       // supersedes an in-flight teasing loop when the pick changes
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
 
@@ -946,24 +947,57 @@ function shakeCards(cards){
 
 function enterPickMode(group, from, targets){
   clearGhost(); clearPick();
-  const lead = group[0];
+  const lead = group[0], src = lead.home;
   const lastOff = group[group.length - 1].home.y - lead.home.y;
-  const nodes = [], spots = [];
+  const spots = [];
   targets.forEach(to => {
     const base = cardXY(to, to.cards.length);           // where the lead would land
-    group.forEach(card => {
-      const el = card.el.cloneNode(true);
-      el.classList.add("ghost"); el.classList.remove("dragging");
-      const off = card.home.y - lead.home.y;            // keep the run's fan spacing
-      el.style.zIndex = 4200;
-      el.style.transform = `translate(${base.x}px,${base.y + off}px)`;
-      boardEl.appendChild(el);
-      nodes.push(el);
-    });
-    pileTopEl(to).classList.add("hint-now");
+    pileTopEl(to).classList.add("hint-now");            // glow every choice at once
     spots.push({ to, x: base.x, y: base.y, w: CARD_W, h: CARD_H + lastOff });
   });
-  pickMode = { group, from, nodes, spots };
+
+  // One translucent copy of the picked run. It doesn't sit still: it leans partway
+  // toward each choice in turn, backs off, and hesitates — signalling "your call."
+  const offs = group.map(card => ({ dx: card.home.x - src.x, dy: card.home.y - src.y }));
+  const nodes = group.map((card, i) => {
+    const el = card.el.cloneNode(true);
+    el.classList.add("ghost", "tease"); el.classList.remove("dragging");
+    el.style.zIndex = 4300;
+    el.style.transform = `translate(${src.x + offs[i].dx}px,${src.y + offs[i].dy}px)`;
+    boardEl.appendChild(el);
+    return el;
+  });
+
+  const token = ++pickSeq;
+  pickMode = { group, from, spots, nodes, offs, token };
+  teasePick(src, spots, token);
+}
+
+// The teasing loop: spring the ghost run partway toward each target in turn,
+// backing off to center and pausing between, so it's clear a choice is needed.
+// Runs until the pick is resolved or cancelled (detected via token mismatch).
+function teasePick(src, spots, token){
+  const LEAN = 0.42;                              // fraction of the way it drifts
+  const way = [];
+  spots.forEach(s => {
+    way.push({ x: src.x + LEAN*(s.x - src.x), y: src.y + LEAN*(s.y - src.y), hold: 560 });
+    way.push({ x: src.x, y: src.y, hold: 300 });  // back off & hesitate before the next
+  });
+  let wi = 0, dwell = 0, lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
+  const frame = (now) => {
+    if (!pickMode || pickMode.token !== token) return;   // resolved/cancelled → stop
+    let dt = (now - last)/1000; last = now; if (dt > 0.032) dt = 0.032;
+    const w = way[wi];
+    vX += (SPRING_K*(w.x - lx) - SPRING_D*vX) * dt;
+    vY += (SPRING_K*(w.y - ly) - SPRING_D*vY) * dt;
+    lx += vX*dt; ly += vY*dt;
+    pickMode.nodes.forEach((el, i) =>
+      el.style.transform = `translate(${lx + pickMode.offs[i].dx}px,${ly + pickMode.offs[i].dy}px)`);
+    dwell += dt*1000;
+    if (dwell >= w.hold){ dwell = 0; wi = (wi + 1) % way.length; }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 function clearPick(){
