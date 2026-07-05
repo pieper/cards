@@ -43,6 +43,7 @@ body{
   transform:translate(-50%,-50%);
   animation:sparklePop .9s ease-out forwards;
 }
+.sparkle.small{font-size:11px;animation-duration:.7s}   /* landing sparkle: tinier, quicker */
 @keyframes sparklePop{
   0%{ transform:translate(-50%,-50%) scale(.2) rotate(0deg); opacity:0 }
   25%{ opacity:1 }

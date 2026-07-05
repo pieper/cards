@@ -257,6 +257,7 @@ function fitBoard(){
 
 function newGame(){
   if (typeof ghost !== "undefined" && ghost) clearGhost();
+  if (typeof pickMode !== "undefined" && pickMode) clearPick();
   boardEl.innerHTML = "";
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
@@ -366,18 +367,22 @@ function undo(){
 
 /* -------------------------------------------------------------- stock draw -- */
 
-// A little celebratory sparkle burst centered on an element.
-function sparkleBurst(target){
+// A little celebratory sparkle burst centered on an element. Options:
+//   count — number of sparkles, dist — spread radius, small — tiny glyphs,
+//   flash — also pulse a gold ring on the target (default true).
+function sparkleBurst(target, opts){
   if (!target) return;
+  const o = opts || {};
+  const count = o.count || 9, near = o.dist || 26;
   const r = target.getBoundingClientRect();
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   const glyphs = ["✨","⭐","💫","✦"];
-  for (let i = 0; i < 9; i++){
+  for (let i = 0; i < count; i++){
     const s = document.createElement("div");
-    s.className = "sparkle";
+    s.className = "sparkle" + (o.small ? " small" : "");
     s.textContent = glyphs[i % glyphs.length];
-    const ang = (Math.PI * 2 * i) / 9 + Math.random() * 0.6;
-    const dist = 26 + Math.random() * 26;
+    const ang = (Math.PI * 2 * i) / count + Math.random() * 0.6;
+    const dist = near + Math.random() * near;
     s.style.left = cx + "px"; s.style.top = cy + "px";
     s.style.setProperty("--dx", Math.cos(ang) * dist + "px");
     s.style.setProperty("--dy", Math.sin(ang) * dist + "px");
@@ -385,8 +390,16 @@ function sparkleBurst(target){
     document.body.appendChild(s);
     setTimeout(() => s.remove(), 1200);
   }
-  target.classList.add("flash");
-  setTimeout(() => target.classList.remove("flash"), 1000);
+  if (o.flash !== false){
+    target.classList.add("flash");
+    setTimeout(() => target.classList.remove("flash"), 1000);
+  }
+}
+
+// A small sparkle right where a card just landed on a legal destination.
+function sparkleLand(pile){
+  const c = topCard(pile);
+  if (c && c.el) sparkleBurst(c.el, { small: true, count: 5, dist: 15, flash: false });
 }
 
 function drawFromStock(){
@@ -560,35 +573,36 @@ function onPointerEnd(e){
     const dst = chosen;
     commitMove(d.group, d.src, dst);
     const land = cardXY(dst, dst.cards.length - d.group.length);
-    animateGroup(d, land.x, land.y, vx, vy, () => { layout(); afterMove(); });
-    G.lastTap = null;
+    animateGroup(d, land.x, land.y, vx, vy, () => { layout(); sparkleLand(dst); afterMove(); });
     return;
   }
 
-  // No drop target. Was this a tap? (barely moved, quick) — used for double-tap.
+  // No drop from the drag. Was this really a TAP? (barely moved, quick.)
   const first = d.samples[0], lastS = d.samples[d.samples.length - 1];
   const movedPx = Math.hypot(lastS.x - first.x, lastS.y - first.y) * d.scale;  // screen px
   const now = performance.now();
   const isTap = movedPx < 12 && (now - first.t) < 350;
 
-  // Double-tap a single top card sends it UP to the foundation (touch-friendly
-  // replacement for dblclick; works with a mouse too).
-  if (isTap && d.group.length === 1 &&
-      G.lastTap && G.lastTap.id === d.lead.id && (now - G.lastTap.t) < 350){
-    G.lastTap = null;
-    const f = findFoundationFor(d.lead);
-    if (f){
-      pushHistory();
-      commitMove(d.group, d.src, f);
-      d.lead.el.style.zIndex = 3000;
-      const land = cardXY(f, f.cards.length - 1);
-      animateGroup(d, land.x, land.y, 0, 0, () => { layout(); afterMove(); });
+  // Tap-to-play: the tapped card jumps to its only legal move; if there's more
+  // than one it lights every destination for a pick; if there's none it shakes.
+  if (isTap){
+    const targets = legalTargets(d.group, d.src);
+    if (targets.length === 1){
+      setGroupPos(d, d.lead.home.x, d.lead.home.y);   // undo the tiny drag jitter
+      playCommit(d.group, d.src, targets[0]);
       return;
     }
+    if (targets.length === 0){
+      layout();                                       // snap home, then wiggle "no"
+      shakeCards(d.group);
+      return;
+    }
+    layout();                                         // snap home before ghosting
+    enterPickMode(d.group, d.src, targets);
+    return;
   }
-  G.lastTap = isTap ? { id: d.lead.id, t: now } : null;
 
-  // Otherwise settle back home.
+  // A real (missed) drag: settle back home.
   animateGroup(d, d.lead.home.x, d.lead.home.y, vx*0.25, vy*0.25, () => layout());
 }
 
@@ -681,10 +695,10 @@ function autoCollectStep(force){
   const land = cardXY(f, f.cards.length - 1);
   card.el.style.zIndex = 3000 + f.cards.length;
   if (fast){
-    animateGroup(drag, land.x, land.y, 0, 0, () => layout(), true);
+    animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); sparkleLand(f); }, true);
     setTimeout(() => autoCollectStep(force), 55);      // stagger next while this flies
   } else {
-    animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); autoCollectStep(force); });
+    animateGroup(drag, land.x, land.y, 0, 0, () => { layout(); sparkleLand(f); autoCollectStep(force); });
   }
 }
 
@@ -792,6 +806,20 @@ window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerEnd);
 window.addEventListener("pointercancel", onPointerEnd);
 
+// While tap-to-play has destinations lit, the very next touch resolves the pick.
+// Capture phase so this beats any card's own handler: a touch on the board plays
+// to the spot under it (or cancels on empty felt), while a touch on a toolbar
+// control just cancels the pick and lets that control do its normal job.
+window.addEventListener("pointerdown", (e) => {
+  if (!pickMode) return;
+  if (e.target.closest && e.target.closest("#toolbar, .fab, #installBanner, #winOverlay")){
+    clearPick(); return;
+  }
+  resolvePick(boardPoint(e));
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+
 // Kill iOS Safari's edge swipe (back/forward navigation) so throwing a card from
 // the screen edge doesn't yank you off the page. touch-action/overscroll can't
 // stop it — you have to preventDefault the touch that starts in the edge strip.
@@ -811,6 +839,7 @@ document.addEventListener("touchstart", (e) => {
 // drag, undo) cancels. Lets you play without dragging fingers over the cards.
 let ghost = null;
 let ghostSeq = 0;
+let pickMode = null;   // tap-to-play: destinations lit up, waiting for the pick
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
 
@@ -868,7 +897,7 @@ function playCommit(group, from, to, drag){
   let z = 2600; group.forEach(c => c.el.style.zIndex = ++z);
   commitMove(group, from, to);
   const land = cardXY(to, to.cards.length - group.length);
-  animateGroup(drag || makeDrag(group), land.x, land.y, 0, 0, () => { layout(); afterMove(); });
+  animateGroup(drag || makeDrag(group), land.x, land.y, 0, 0, () => { layout(); sparkleLand(to); afterMove(); });
 }
 
 // Flat list of every legal move on the board (foundation moves first).
@@ -895,7 +924,68 @@ function clearGhost(){
   document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
   ghost = null;
 }
-function cancelCycle(){ clearGhost(); }            // external interrupts (deal/drag/undo)
+function cancelCycle(){ clearGhost(); clearPick(); } // external interrupts (deal/drag/undo)
+
+/* -------------------------------------------------- tap-to-play (pick mode) -- */
+// Tapping a card auto-plays it. With several legal destinations we can't guess
+// which one, so we light every landing spot with a translucent ghost + gold glow
+// and wait: the next touch on a lit spot plays there, anywhere else cancels.
+
+function shakeCards(cards){
+  cards.forEach(card => {
+    const { x, y } = card.home;
+    card.el.animate([
+      { transform:`translate(${x}px,${y}px)` },
+      { transform:`translate(${x-7}px,${y}px)` },
+      { transform:`translate(${x+7}px,${y}px)` },
+      { transform:`translate(${x-4}px,${y}px)` },
+      { transform:`translate(${x}px,${y}px)` },
+    ], { duration: 300, easing: "ease-in-out" });
+  });
+}
+
+function enterPickMode(group, from, targets){
+  clearGhost(); clearPick();
+  const lead = group[0];
+  const lastOff = group[group.length - 1].home.y - lead.home.y;
+  const nodes = [], spots = [];
+  targets.forEach(to => {
+    const base = cardXY(to, to.cards.length);           // where the lead would land
+    group.forEach(card => {
+      const el = card.el.cloneNode(true);
+      el.classList.add("ghost"); el.classList.remove("dragging");
+      const off = card.home.y - lead.home.y;            // keep the run's fan spacing
+      el.style.zIndex = 4200;
+      el.style.transform = `translate(${base.x}px,${base.y + off}px)`;
+      boardEl.appendChild(el);
+      nodes.push(el);
+    });
+    pileTopEl(to).classList.add("hint-now");
+    spots.push({ to, x: base.x, y: base.y, w: CARD_W, h: CARD_H + lastOff });
+  });
+  pickMode = { group, from, nodes, spots };
+}
+
+function clearPick(){
+  if (!pickMode) return;
+  pickMode.nodes.forEach(n => n.remove());
+  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
+  pickMode = null;
+}
+
+// A touch while destinations are lit: play to the spot under it, else cancel.
+function resolvePick(pt){
+  const pm = pickMode;
+  clearPick();
+  if (!pm) return;
+  for (const s of pm.spots){
+    if (pt.x >= s.x && pt.x <= s.x + s.w && pt.y >= s.y && pt.y <= s.y + s.h){
+      playCommit(pm.group, pm.from, s.to);
+      return;
+    }
+  }
+  // tapped somewhere else → just cancel (cards are already back home)
+}
 
 // Render the current move as a translucent ghost gliding source → destination.
 function showGhost(){
