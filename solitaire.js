@@ -278,7 +278,9 @@ function newGame(){
     if (p.type === "foundation") b.innerHTML = `<div class="glyph">${SYMBOL[p.index]}</div>`;
     if (p.type === "stock")      b.innerHTML = `<div class="glyph">⟳</div>`;
     p.el = b; boardEl.appendChild(b);
-    if (p.type === "stock") b.addEventListener("click", drawFromStock);
+    // Dealing is handled by the board-level pointerdown handler (see wiring), so
+    // it works anywhere that isn't a card — including the stock near the screen
+    // edge, where a "click" would be eaten by the anti-swipe touch guard.
   });
 
   // deck
@@ -586,7 +588,7 @@ function onPointerEnd(e){
   // Tap-to-play: the tapped card jumps to its only legal move; if there's more
   // than one it lights every destination for a pick; if there's none it shakes.
   if (isTap){
-    const targets = legalTargets(d.group, d.src);
+    const targets = tapTargets(d.group, d.src);
     if (targets.length === 1){
       setGroupPos(d, d.lead.home.x, d.lead.home.y);   // undo the tiny drag jitter
       playCommit(d.group, d.src, targets[0]);
@@ -784,6 +786,7 @@ async function showWin(){
   overlay.hidden = false;
   wrap.innerHTML = '<div class="spinner"></div>';
   cap.textContent = "";
+  drawFinalWinChart();                                 // recap the odds swing (if tracked)
   try { localStorage.removeItem("save"); } catch {}   // finished game — don't resume it
 
   for (const [url, label] of winCandidates()){
@@ -819,6 +822,17 @@ window.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   e.stopPropagation();
 }, true);
+
+// Deal from the stock on a touch anywhere that isn't a card — the whole board is
+// a big, forgiving hit target for the deck, so the small stock pile (tucked near
+// the screen edge on phones) is no longer easy to miss. Cards keep their own
+// handler; pick-mode taps are consumed above before they reach here.
+boardEl.addEventListener("pointerdown", (e) => {
+  if (pickMode || G.drag) return;              // a pick or drag is in progress
+  if (e.button != null && e.button !== 0) return;
+  if (e.target.closest && e.target.closest(".card")) return;   // a real card → let it handle itself
+  drawFromStock();
+});
 
 // Kill iOS Safari's edge swipe (back/forward navigation) so throwing a card from
 // the screen edge doesn't yank you off the page. touch-action/overscroll can't
@@ -859,6 +873,47 @@ function legalTargets(group, from){
     ts.push(t);
   });
   return ts;
+}
+
+// Would keeping `card` on the tableau (rather than sending it to a foundation)
+// let some OTHER buried run relocate onto it and expose a face-down card? That's
+// the one case where "just send it up" would cost you a reveal — worth a choice.
+function tapKeepRevealsCard(card, from){
+  const need = card.rank - 1;
+  if (need < 1) return false;                         // nothing sits below an Ace
+  for (const p of G.piles.tableau){
+    if (p === from) continue;
+    const f = p.cards.findIndex(c => c.faceUp);
+    if (f <= 0) continue;                             // no face-down card beneath the run
+    const run = p.cards.slice(f);
+    if (!isValidRun(run)) continue;
+    const lead = run[0];
+    if (lead.rank === need && colorOf(lead.suit) !== colorOf(card.suit)) return true;
+  }
+  return false;
+}
+
+// The destinations to offer when a card is TAPPED (vs. dragged). Trims the raw
+// legal moves down to real decisions so the player is only asked to pick when it
+// actually matters:
+//   • interchangeable tableau columns collapse to one (same landing either way);
+//   • a foundation ("the top") is taken automatically when it's safe or when
+//     keeping the card on the tableau wouldn't buy a reveal;
+//   • only a genuine top-vs-reveal fork is handed back as a multi-choice pick.
+function tapTargets(group, from){
+  const raw = legalTargets(group, from);
+  if (raw.length <= 1) return raw;                    // 0 → shake, 1 → just play it
+  const card = group[0];
+  const foundation = raw.find(t => t.type === "foundation") || null;
+  const tableau =
+    raw.find(t => t.type === "tableau" && t.cards.length > 0) ||  // any non-empty (all equal)
+    raw.find(t => t.type === "tableau") || null;                  // else an empty column
+  if (foundation && tableau){
+    if (isSafe(card)) return [foundation];            // it'd auto-play up anyway → top
+    return tapKeepRevealsCard(card, from) ? [foundation, tableau] : [foundation];
+  }
+  if (foundation) return [foundation];
+  return tableau ? [tableau] : raw;                   // tableau-only → one, no prompt
 }
 
 function moveableCards(){
@@ -1244,36 +1299,68 @@ function scheduleWinProb(){
 }
 function resetWin(){ G.winHistory = []; lastPub = ""; drawWinChart(); }
 
-function drawWinChart(){
-  const cv = winCanvas; if (!cv) return;
-  if (!oddsOn()){ cv.style.display = "none"; return; }
-  cv.style.display = "block";
-  const cssW = cv.clientWidth || 320, cssH = 66, dpr = window.devicePixelRatio || 1;
-  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
-  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
-  const ctx = cv.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const W = cssW, H = cssH;
+// Paint the win-probability strip (band + expected line + label) into a context
+// sized W×H (CSS px). Shared by the toolbar strip and the victory-popup recap.
+function paintWinStrip(ctx, W, H, raw, label){
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "#0a3d22"; ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = "#ffffff22"; ctx.lineWidth = 1;
   for (const g of [0.25, 0.5, 0.75]){ const y = H - g*H; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-  const raw = G.winHistory || [];
   const hist = raw.length === 1 ? [raw[0], raw[0]] : raw;
   const n = hist.length;
-  if (n >= 2){
-    const X = i => (i / (n - 1)) * W, Y = p => H - p * H;
-    ctx.beginPath();
-    for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].high); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-    for (let i = n - 1; i >= 0; i--){ ctx.lineTo(X(i), Y(hist[i].low)); }
-    ctx.closePath(); ctx.fillStyle = "#ffd54a33"; ctx.fill();
-    ctx.beginPath();
-    for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].mid); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-    ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.stroke();
-    const cur = raw[raw.length - 1];
+  if (n < 2) return;
+  const X = i => (i / (n - 1)) * W, Y = p => H - p * H;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].high); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  for (let i = n - 1; i >= 0; i--){ ctx.lineTo(X(i), Y(hist[i].low)); }
+  ctx.closePath(); ctx.fillStyle = "#ffd54a33"; ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].mid); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.stroke();
+  if (label){
     ctx.fillStyle = "#eafff1"; ctx.font = "600 12px -apple-system,Arial,sans-serif"; ctx.textAlign = "left";
-    ctx.fillText(`win ≈ ${Math.round(cur.mid*100)}%  ( ${Math.round(cur.low*100)}–${Math.round(cur.high*100)} )`, 8, 15);
+    ctx.fillText(label, 8, 15);
   }
+}
+
+// Size a canvas to its CSS box at device-pixel resolution and return a ready ctx.
+function fitCanvasCtx(cv, cssW, cssH){
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function winLabel(raw){
+  if (!raw.length) return "";
+  const cur = raw[raw.length - 1];
+  return `win ≈ ${Math.round(cur.mid*100)}%  ( ${Math.round(cur.low*100)}–${Math.round(cur.high*100)} )`;
+}
+
+function drawWinChart(){
+  const cv = winCanvas; if (!cv) return;
+  if (!oddsOn()){ cv.style.display = "none"; return; }
+  cv.style.display = "block";
+  const raw = G.winHistory || [];
+  const cssW = cv.clientWidth || 320, cssH = 66;
+  paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw));
+}
+
+// Recap chart shown inside the "You win!" popup, so the player can see how the
+// odds swung on the game they just took. Hidden if no odds were tracked.
+function drawFinalWinChart(){
+  const wrap = document.getElementById("winOddsWrap");
+  const cv = document.getElementById("winchartFinal");
+  if (!wrap || !cv) return;
+  const raw = G.winHistory || [];
+  if (raw.length < 2){ wrap.hidden = true; return; }
+  wrap.hidden = false;
+  requestAnimationFrame(() => {                          // let the popup lay out first
+    const cssW = cv.clientWidth || 440, cssH = 104;
+    paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw));
+  });
 }
 
 oddsToggle.checked = (lsGet("odds") ?? "1") === "1";          // default on, remembered
