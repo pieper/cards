@@ -726,7 +726,7 @@ function isWon(){
 function checkWin(){ if (isWon() && !G.winShown){ G.winShown = true; showWin(); } }
 
 function updateStatus(){
-  if (typeof updateDealIcon === "function") updateDealIcon();   // keep deal art in sync with turn-3/1
+  if (typeof updateMoveButton === "function") updateMoveButton();   // deal-vs-wand state + turn-3/1 art
   const f = G.piles.foundations.reduce((n,p)=>n+p.cards.length,0);
   document.getElementById("status").textContent = `Foundations: ${f}/52`;
 }
@@ -823,15 +823,15 @@ window.addEventListener("pointerdown", (e) => {
   e.stopPropagation();
 }, true);
 
-// Deal from the stock on a touch anywhere that isn't a card — the whole board is
-// a big, forgiving hit target for the deck, so the small stock pile (tucked near
-// the screen edge on phones) is no longer easy to miss. Cards keep their own
-// handler; pick-mode taps are consumed above before they reach here.
+// A touch anywhere that isn't a card runs the combo action (auto-play if a move
+// is available, else deal) — the whole board is a big, forgiving hit target, so
+// the small stock pile near the screen edge is no longer easy to miss. Cards keep
+// their own handler; pick-mode taps are consumed above before they reach here.
 boardEl.addEventListener("pointerdown", (e) => {
   if (pickMode || G.drag) return;              // a pick or drag is in progress
   if (e.button != null && e.button !== 0) return;
   if (e.target.closest && e.target.closest(".card")) return;   // a real card → let it handle itself
-  drawFromStock();
+  moveButtonTap();
 });
 
 // Kill iOS Safari's edge swipe (back/forward navigation) so throwing a card from
@@ -851,6 +851,9 @@ document.addEventListener("touchstart", (e) => {
 // tap-to-play picker below.
 let pickMode = null;   // tap-to-play: destinations lit up, waiting for the pick
 let pickSeq = 0;       // supersedes an in-flight teasing loop when the pick changes
+let cycleG = null;     // wand-fork decision: a cycling ghost preview of each option
+let cycleSeq = 0;      // supersedes an in-flight cycling loop
+let wandRunning = false, wandCount = 0;   // auto-play cascade state (+ runaway guard)
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
 
@@ -971,7 +974,7 @@ function isStuck(){
     G.piles.tableau.some(t => canDropTableau(c, t)));
 }
 
-function cancelCycle(){ clearPick(); }               // external interrupts (deal/drag/undo)
+function cancelCycle(){ clearPick(); clearCycleGhost(); cancelWand(); } // external interrupts (deal/drag/undo)
 
 /* -------------------------------------------------- tap-to-play (pick mode) -- */
 // Tapping a card auto-plays it. With several legal destinations we can't guess
@@ -992,7 +995,7 @@ function shakeCards(cards){
 }
 
 function enterPickMode(group, from, targets){
-  clearPick();
+  clearPick(); clearCycleGhost();
   const lead = group[0], src = lead.home;
   const lastOff = group[group.length - 1].home.y - lead.home.y;
   const spots = [];
@@ -1067,38 +1070,153 @@ function resolvePick(pt){
   // tapped somewhere else → just cancel (cards are already back home)
 }
 
-/* ----------------------------------------------------- wand: auto-play a move -- */
-// The Wand button plays one good move for you. buildMoves() already lists the
-// waste ("the pile") moves first — foundation target before tableau — and then
-// the productive tableau moves, so the first entry is exactly the priority the
-// player asked for: play from the pile if you can, otherwise shift the tableau.
-// Nothing to play → the whole board does a little pinball "tilt".
-function wandPlay(){
-  cancelCycle();
-  const moves = buildMoves();
-  if (!moves.length){ tiltBoard(); return; }
-  const m = moves[0];
-  playCommit(m.group, m.from, m.to);
+/* --------------------------------------------- combo button: deal ↔ auto-play -- */
+// One button. When a productive move exists it goes GOLD with a wand and, on tap,
+// auto-plays the obvious/forced moves in a cascade — pausing at a genuine fork to
+// let YOU decide (a cycling ghost, below). When nothing's playable it goes GREEN
+// with the deck art (three fanned cards in turn-3, one in turn-1) and draws stock.
+const WAND_HTML = "🪄";
+
+function moveButtonTap(){
+  if (wandRunning) return;                   // a cascade is already running
+  if (cycleG){
+    // A decision is on screen. Tapping the button accepts the option currently
+    // being shown and resumes the cascade — so you can just keep tapping to play
+    // it out. (Tapping the blue-lit card instead lets you choose a specific one.)
+    const m = cycleG.moves[cycleG.gi];
+    clearCycleGhost();
+    wandRunning = true; wandCount = 0;
+    cascadeMove(m);                          // plays it, then wandStep continues
+    updateMoveButton();
+    return;
+  }
+  if (buildMoves().length) wandCascade();
+  else drawFromStock();
 }
 
-// Pinball "tilt": every card gets bumped a few px in unison, then settles home.
-function tiltBoard(){
-  const a = 6;
-  eachPile(p => p.cards.forEach(card => {
-    const { x, y } = card.home;
-    card.el.animate([
-      { transform:`translate(${x}px,${y}px)` },
-      { transform:`translate(${x+a}px,${y-2}px)`, offset:0.25 },
-      { transform:`translate(${x-a}px,${y}px)`,   offset:0.55 },
-      { transform:`translate(${x+a*0.5}px,${y-1}px)`, offset:0.8 },
-      { transform:`translate(${x}px,${y}px)` },
-    ], { duration: 300, easing:"ease-in-out" });
-  }));
+// Auto-play forced/safe moves until only a real decision (or nothing) is left.
+function wandCascade(){
+  if (wandRunning) return;
+  wandRunning = true; wandCount = 0;
+  updateMoveButton();
+  wandStep();
+}
+function cancelWand(){ wandRunning = false; }
+
+function wandStep(){
+  if (!wandRunning) return;
+  if (++wandCount > 400){ wandRunning = false; updateMoveButton(); return; }   // runaway guard
+  // 0) Endgame (everything face-up, deck done): blast it home like Auto-finish —
+  //    no reveals are left to decide, so there's nothing to pause on.
+  if (isAutoFinishable()){ wandRunning = false; updateMoveButton(); autoCollectStep(true); return; }
+  // 1) Obvious: sweep safe cards up to the foundations.
+  const safe = safeCollectMove();
+  if (safe){ cascadeMove(safe); return; }
+  // 2) Forced: exactly one genuinely-distinct productive move.
+  const moves = dedupeMoves(buildMoves());
+  if (moves.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
+  if (moves.length === 1){ cascadeMove(moves[0]); return; }
+  // 3) A real decision — hand it to the player with a cycling ghost.
+  wandRunning = false;
+  enterCycleGhost(moves);
+  updateMoveButton();
+}
+
+// Commit a move (fast anim) and continue the cascade the moment it lands.
+function cascadeMove(m){
+  pushHistory();
+  let z = 2600; m.group.forEach(c => c.el.style.zIndex = ++z);
+  commitMove(m.group, m.from, m.to);
+  const land = cardXY(m.to, m.to.cards.length - m.group.length);
+  animateGroup(makeDrag(m.group), land.x, land.y, 0, 0,
+    () => { layout(); sparkleLand(m.to); wandStep(); }, true);
+}
+
+// A safe foundation collect (one that never hurts tableau building), or null.
+function safeCollectMove(){
+  const consider = (pile) => {
+    const c = topCard(pile); if (!c || !c.faceUp) return null;
+    const f = findFoundationFor(c);
+    return (f && isSafe(c)) ? { group:[c], from:pile, to:f } : null;
+  };
+  let m = consider(G.piles.waste); if (m) return m;
+  for (const t of G.piles.tableau){ m = consider(t); if (m) return m; }
+  return null;
+}
+
+// Collapse equivalent moves so a "fork" only lists genuinely different choices:
+// for one lead card, every non-empty tableau column is the same landing, and all
+// empty columns are the same. If this leaves one move, it wasn't a fork at all.
+function moveKey(m){
+  const dst = m.to.type === "foundation" ? "F"
+            : m.to.cards.length === 0 ? "Te" : "Tc";
+  return m.group[0].id + ":" + dst;
+}
+function dedupeMoves(moves){
+  const seen = new Set(), out = [];
+  for (const m of moves){ const k = moveKey(m); if (!seen.has(k)){ seen.add(k); out.push(m); } }
+  return out;
+}
+
+/* ------------------------------------------ cycling ghost: a real decision to make -- */
+// Several genuinely different moves are on the table (which pile to reveal, send a
+// card up or keep it to receive a run, …). Rather than guess, we glide a ghost of
+// each option source→destination in turn — about one per second, hesitating at the
+// end — lighting the card to grab (blue) and where it lands (gold). The player
+// resolves it by touching a source card (then a destination if it has a choice);
+// touching anywhere else, dealing, or undoing dismisses it.
+function clearCycleGhost(){
+  if (!cycleG) return;
+  clearTimeout(cycleG.timer);
+  cycleG.nodes.forEach(n => n.remove());
+  document.querySelectorAll(".hint-now,.hint-src").forEach(e => e.classList.remove("hint-now","hint-src"));
+  cycleG = null;
+}
+function enterCycleGhost(moves){
+  clearPick(); clearCycleGhost();
+  cycleG = { moves, gi: 0, nodes: [], timer: 0, token: ++cycleSeq };
+  showCycleGhost();
+}
+function showCycleGhost(){
+  const token = cycleG.token;
+  cycleG.nodes.forEach(n => n.remove()); cycleG.nodes = [];
+  document.querySelectorAll(".hint-now,.hint-src").forEach(e => e.classList.remove("hint-now","hint-src"));
+  const m = cycleG.moves[cycleG.gi];
+  const lead = m.group[0], src = lead.home;
+  const dst = cardXY(m.to, m.to.cards.length);
+  const offs = m.group.map(c => ({ dx: c.home.x - src.x, dy: c.home.y - src.y }));
+  cycleG.nodes = m.group.map((c, i) => {
+    const el = c.el.cloneNode(true);
+    el.classList.add("ghost", "tease"); el.classList.remove("dragging");
+    el.style.zIndex = 4300;
+    el.style.transform = `translate(${src.x + offs[i].dx}px,${src.y + offs[i].dy}px)`;
+    boardEl.appendChild(el);
+    return el;
+  });
+  lead.el.classList.add("hint-src");                  // the card to grab
+  pileTopEl(m.to).classList.add("hint-now");           // where it would go
+  // Glide the ghost source → destination, then hold (the "hesitation").
+  let lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
+  const set = (x, y) => cycleG && cycleG.token === token &&
+    cycleG.nodes.forEach((el, i) => el.style.transform = `translate(${x + offs[i].dx}px,${y + offs[i].dy}px)`);
+  const frame = (now) => {
+    if (!cycleG || cycleG.token !== token) return;
+    let dt = (now - last)/1000; last = now; if (dt > 0.032) dt = 0.032;
+    vX += (SPRING_K*(dst.x - lx) - SPRING_D*vX) * dt;
+    vY += (SPRING_K*(dst.y - ly) - SPRING_D*vY) * dt;
+    lx += vX*dt; ly += vY*dt; set(lx, ly);
+    if (Math.hypot(dst.x - lx, dst.y - ly) < 0.6 && Math.hypot(vX, vY) < 14){ set(dst.x, dst.y); return; }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  cycleG.timer = setTimeout(() => {                    // ~1s per option, then the next
+    if (!cycleG || cycleG.token !== token) return;
+    cycleG.gi = (cycleG.gi + 1) % cycleG.moves.length;
+    showCycleGhost();
+  }, 1100);
 }
 
 /* -------------------------------------------------------- deal-button artwork -- */
-// The deal button shows the deck it will draw: three fanned face-down cards in
-// turn-3, a single face-down card in turn-1 — a live reminder of the current mode.
 function dealIconSVG(three){
   const back = (rot) =>
     `<g transform="rotate(${rot} 0 16)">` +
@@ -1108,13 +1226,24 @@ function dealIconSVG(three){
   const inner = three ? back(-18) + back(0) + back(18) : back(0);
   return `<svg viewBox="-24 -20 48 40" width="38" height="32" aria-hidden="true">${inner}</svg>`;
 }
-let lastDealThree = null;
-function updateDealIcon(){
-  const three = document.getElementById("drawThree").checked;
-  if (three === lastDealThree) return;               // no DOM churn when unchanged
-  lastDealThree = three;
+const RECYCLE_HTML = `<span style="font-size:34px;line-height:1">⟳</span>`;
+function updateMoveButton(){
   const el = document.getElementById("dealFab");
-  if (el) el.innerHTML = dealIconSVG(three);
+  if (!el) return;
+  const dealt = !!(G.piles && G.piles.tableau);     // piles may not exist at first wiring
+  const wandMode = wandRunning || !!cycleG || (dealt && buildMoves().length > 0);
+  el.classList.toggle("wand", wandMode);
+  if (wandMode){
+    if (el._mode !== "wand"){ el.innerHTML = WAND_HTML; el._mode = "wand"; }
+  } else if (dealt && G.piles.stock.cards.length === 0){
+    // Stock's spent: the next tap RECYCLES the waste (flips it face-down back to
+    // the stock), so show a recycle glyph — not the deal fan — to make that clear.
+    if (el._mode !== "recycle"){ el.innerHTML = RECYCLE_HTML; el._mode = "recycle"; }
+  } else {
+    const three = document.getElementById("drawThree").checked;
+    const key = three ? "d3" : "d1";
+    if (el._mode !== key){ el.innerHTML = dealIconSVG(three); el._mode = key; }
+  }
 }
 
 /* ---------------------------------------------------------------- wiring -- */
@@ -1122,7 +1251,6 @@ function updateDealIcon(){
 document.getElementById("newGame").addEventListener("click", startGame);
 document.getElementById("winNew").addEventListener("click", startGame);
 document.getElementById("undo").addEventListener("click", undo);
-document.getElementById("wandFab").addEventListener("click", wandPlay);
 document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
 window.addEventListener("resize", () => { fitBoard();
   document.getElementById("stage").style.height =
@@ -1143,11 +1271,11 @@ else if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
 else if (IS_PHONE_SCREEN) currentDeck = "phone";
 deckSel.value = currentDeck;
 
-// "Phone mode" (Phone deck): show the thumb-reach deal button.
+// "Phone mode" (Phone deck): show the thumb-reach combo button.
 const dealFab = document.getElementById("dealFab");
-dealFab.addEventListener("click", drawFromStock);
-document.getElementById("drawThree").addEventListener("change", updateDealIcon);
-updateDealIcon();                                    // initial deck art
+dealFab.addEventListener("click", moveButtonTap);
+document.getElementById("drawThree").addEventListener("change", updateMoveButton);
+updateMoveButton();                                  // initial button state + art
 const updatePhoneMode = () =>
   document.body.classList.toggle("phone-mode", currentDeck === "phone");
 updatePhoneMode();

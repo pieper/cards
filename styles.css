@@ -125,8 +125,8 @@ body{
 }
 .card .center-suit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:54px}
 
-/* Phone-mode floating buttons: WAND (auto-play) on the left, DEAL on the right.
-   wand ── deal   */
+/* Phone-mode floating button: one combo control, bottom-right. GREEN = deal
+   (draw from the stock); GOLD = wand (a move is available — tap to auto-play). */
 .fab{
   display:none;position:fixed;
   width:66px;height:66px;border-radius:50%;
@@ -135,19 +135,21 @@ body{
   box-shadow:0 5px 16px #0008;
   align-items:center;justify-content:center;
   -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  transition:background .2s ease;
 }
 .fab:active{transform:scale(.93)}
 body.phone-mode .fab{display:flex}
 #dealFab {right:calc(16px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#0b6e3b}
+#dealFab.wand{background:#f0b429}      /* gold: auto-play available */
 #dealFab svg{display:block}
-#wandFab {right:calc(94px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#7c3aed}
 
 /* Ghost preview of a move + its destination highlight. */
 .card.ghost{opacity:.5;pointer-events:none;outline:3px dashed #ffd54a;outline-offset:1px}
-/* Tap-to-play teaser: a touch brighter and lifted, so the leaning ghost stands
-   out over the (statically) glowing destinations while it hunts between them. */
+/* Tap-to-play / decision teaser: a touch brighter and lifted, so the leaning
+   ghost stands out over the glowing destinations while it hunts between them. */
 .card.ghost.tease{opacity:.66;outline-color:#ffe27a;box-shadow:0 6px 16px rgba(0,0,0,.4)}
-.hint-now{box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0;z-index:60}
+.hint-now{box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0;z-index:60}          /* destination */
+.hint-src{box-shadow:0 0 0 4px #5bc0ff,0 0 16px 4px #5bc0ffc0;z-index:60}          /* card to grab */
 
 /* Install banner (PWA) */
 #installBanner{
