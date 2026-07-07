@@ -256,7 +256,6 @@ function fitBoard(){
 /* ---------------------------------------------------------------- dealing -- */
 
 function newGame(){
-  if (typeof ghost !== "undefined" && ghost) clearGhost();
   if (typeof pickMode !== "undefined" && pickMode) clearPick();
   boardEl.innerHTML = "";
   buildPiles();
@@ -727,6 +726,7 @@ function isWon(){
 function checkWin(){ if (isWon() && !G.winShown){ G.winShown = true; showWin(); } }
 
 function updateStatus(){
+  if (typeof updateDealIcon === "function") updateDealIcon();   // keep deal art in sync with turn-3/1
   const f = G.piles.foundations.reduce((n,p)=>n+p.cards.length,0);
   document.getElementById("status").textContent = `Foundations: ${f}/52`;
 }
@@ -846,13 +846,9 @@ document.addEventListener("touchstart", (e) => {
   e.preventDefault();                                                 // suppress the swipe gesture
 }, { passive: false });
 
-/* ------------------------------------------------ ghost-preview move cycler -- */
-// Phone assist, two buttons. "Cycle" steps through every legal move showing a
-// translucent GHOST of the card(s) gliding to that spot — the real cards never
-// move. "Do it" commits the currently-shown ghost move. Any other action (deal,
-// drag, undo) cancels. Lets you play without dragging fingers over the cards.
-let ghost = null;
-let ghostSeq = 0;
+/* --------------------------------------------------- legal-move enumeration -- */
+// Shared move-finding used by the Wand (auto-play), the stuck detector, and the
+// tap-to-play picker below.
 let pickMode = null;   // tap-to-play: destinations lit up, waiting for the pick
 let pickSeq = 0;       // supersedes an in-flight teasing loop when the pick changes
 
@@ -975,12 +971,7 @@ function isStuck(){
     G.piles.tableau.some(t => canDropTableau(c, t)));
 }
 
-function clearGhost(){
-  if (ghost && ghost.nodes) ghost.nodes.forEach(n => n.remove());
-  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
-  ghost = null;
-}
-function cancelCycle(){ clearGhost(); clearPick(); } // external interrupts (deal/drag/undo)
+function cancelCycle(){ clearPick(); }               // external interrupts (deal/drag/undo)
 
 /* -------------------------------------------------- tap-to-play (pick mode) -- */
 // Tapping a card auto-plays it. With several legal destinations we can't guess
@@ -1001,7 +992,7 @@ function shakeCards(cards){
 }
 
 function enterPickMode(group, from, targets){
-  clearGhost(); clearPick();
+  clearPick();
   const lead = group[0], src = lead.home;
   const lastOff = group[group.length - 1].home.y - lead.home.y;
   const spots = [];
@@ -1076,63 +1067,54 @@ function resolvePick(pt){
   // tapped somewhere else → just cancel (cards are already back home)
 }
 
-// Render the current move as a translucent ghost gliding source → destination.
-function showGhost(){
-  if (ghost.nodes) ghost.nodes.forEach(n => n.remove());
-  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
-  const m = ghost.moves[ghost.gi];
-  const src = m.group[0].home;
-  const dst = cardXY(m.to, m.to.cards.length);
-  const nodes = m.group.map(card => {
-    const el = card.el.cloneNode(true);
-    el.classList.add("ghost"); el.classList.remove("dragging");
-    el.style.zIndex = 4000;
-    boardEl.appendChild(el);
-    return { el, dx: card.home.x - src.x, dy: card.home.y - src.y };
-  });
-  ghost.nodes = nodes.map(n => n.el);
-  pileTopEl(m.to).classList.add("hint-now");
-  const set = (x, y) => nodes.forEach(n => n.el.style.transform = `translate(${x + n.dx}px,${y + n.dy}px)`);
-  set(src.x, src.y);
-  const token = ++ghostSeq; ghost.token = token;
-  let lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
-  const frame = (now) => {
-    if (!ghost || ghost.token !== token) return;   // superseded or cleared
-    let dt = (now - last) / 1000; last = now; if (dt > 0.032) dt = 0.032;
-    vX += (SPRING_K * (dst.x - lx) - SPRING_D * vX) * dt;
-    vY += (SPRING_K * (dst.y - ly) - SPRING_D * vY) * dt;
-    lx += vX * dt; ly += vY * dt;
-    set(lx, ly);
-    if (Math.hypot(dst.x - lx, dst.y - ly) < 0.6 && Math.hypot(vX, vY) < 14){ set(dst.x, dst.y); return; }
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
-}
-
-function shake(id){
-  document.getElementById(id).animate(
-    [{transform:"translateX(0)"},{transform:"translateX(-6px)"},{transform:"translateX(6px)"},{transform:"translateX(0)"}],
-    { duration: 220 });
-}
-
-// "Cycle" button: begin a session / step to the next legal move.
-function cycleMove(){
-  if (!ghost){
-    const moves = buildMoves();
-    if (!moves.length){ shake("cycleFab"); return; }
-    ghost = { moves, gi: 0, nodes: [], token: 0 };
-  } else {
-    ghost.gi = (ghost.gi + 1) % ghost.moves.length;
-  }
-  showGhost();
-}
-
-// "Do it" button: commit the currently previewed ghost move for real.
-function doMove(){
-  if (!ghost){ shake("doFab"); return; }
-  const m = ghost.moves[ghost.gi];
-  clearGhost();
+/* ----------------------------------------------------- wand: auto-play a move -- */
+// The Wand button plays one good move for you. buildMoves() already lists the
+// waste ("the pile") moves first — foundation target before tableau — and then
+// the productive tableau moves, so the first entry is exactly the priority the
+// player asked for: play from the pile if you can, otherwise shift the tableau.
+// Nothing to play → the whole board does a little pinball "tilt".
+function wandPlay(){
+  cancelCycle();
+  const moves = buildMoves();
+  if (!moves.length){ tiltBoard(); return; }
+  const m = moves[0];
   playCommit(m.group, m.from, m.to);
+}
+
+// Pinball "tilt": every card gets bumped a few px in unison, then settles home.
+function tiltBoard(){
+  const a = 6;
+  eachPile(p => p.cards.forEach(card => {
+    const { x, y } = card.home;
+    card.el.animate([
+      { transform:`translate(${x}px,${y}px)` },
+      { transform:`translate(${x+a}px,${y-2}px)`, offset:0.25 },
+      { transform:`translate(${x-a}px,${y}px)`,   offset:0.55 },
+      { transform:`translate(${x+a*0.5}px,${y-1}px)`, offset:0.8 },
+      { transform:`translate(${x}px,${y}px)` },
+    ], { duration: 300, easing:"ease-in-out" });
+  }));
+}
+
+/* -------------------------------------------------------- deal-button artwork -- */
+// The deal button shows the deck it will draw: three fanned face-down cards in
+// turn-3, a single face-down card in turn-1 — a live reminder of the current mode.
+function dealIconSVG(three){
+  const back = (rot) =>
+    `<g transform="rotate(${rot} 0 16)">` +
+      `<rect x="-8.5" y="-12.5" width="17" height="25" rx="3" fill="#1d4ed8" stroke="#fff" stroke-width="2"/>` +
+      `<rect x="-5.5" y="-9.5" width="11" height="19" rx="2" fill="none" stroke="#ffffff88" stroke-width="1.3"/>` +
+    `</g>`;
+  const inner = three ? back(-18) + back(0) + back(18) : back(0);
+  return `<svg viewBox="-24 -20 48 40" width="38" height="32" aria-hidden="true">${inner}</svg>`;
+}
+let lastDealThree = null;
+function updateDealIcon(){
+  const three = document.getElementById("drawThree").checked;
+  if (three === lastDealThree) return;               // no DOM churn when unchanged
+  lastDealThree = three;
+  const el = document.getElementById("dealFab");
+  if (el) el.innerHTML = dealIconSVG(three);
 }
 
 /* ---------------------------------------------------------------- wiring -- */
@@ -1140,8 +1122,7 @@ function doMove(){
 document.getElementById("newGame").addEventListener("click", startGame);
 document.getElementById("winNew").addEventListener("click", startGame);
 document.getElementById("undo").addEventListener("click", undo);
-document.getElementById("cycleFab").addEventListener("click", cycleMove);
-document.getElementById("doFab").addEventListener("click", doMove);
+document.getElementById("wandFab").addEventListener("click", wandPlay);
 document.getElementById("finish").addEventListener("click", () => autoCollectStep(true));
 window.addEventListener("resize", () => { fitBoard();
   document.getElementById("stage").style.height =
@@ -1165,6 +1146,8 @@ deckSel.value = currentDeck;
 // "Phone mode" (Phone deck): show the thumb-reach deal button.
 const dealFab = document.getElementById("dealFab");
 dealFab.addEventListener("click", drawFromStock);
+document.getElementById("drawThree").addEventListener("change", updateDealIcon);
+updateDealIcon();                                    // initial deck art
 const updatePhoneMode = () =>
   document.body.classList.toggle("phone-mode", currentDeck === "phone");
 updatePhoneMode();

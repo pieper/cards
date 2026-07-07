@@ -125,25 +125,22 @@ body{
 }
 .card .center-suit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:54px}
 
-/* Phone-mode floating buttons, arranged as a right triangle: DEAL at the
-   right-angle vertex (bottom-right), CYCLE directly above it, DO-IT to its left.
-       cycle
-         |
-   do ── deal            */
+/* Phone-mode floating buttons: WAND (auto-play) on the left, DEAL on the right.
+   wand ── deal   */
 .fab{
   display:none;position:fixed;
   width:66px;height:66px;border-radius:50%;
   border:2px solid #ffffff55;color:#fff;
-  font-size:28px;line-height:1;cursor:pointer;z-index:3600;
+  font-size:30px;line-height:1;cursor:pointer;z-index:3600;
   box-shadow:0 5px 16px #0008;
   align-items:center;justify-content:center;
   -webkit-tap-highlight-color:transparent;touch-action:manipulation;
 }
 .fab:active{transform:scale(.93)}
 body.phone-mode .fab{display:flex}
-#dealFab {right:calc(16px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#d97706}
-#cycleFab{right:calc(16px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));background:#2563eb;font-size:34px}
-#doFab   {right:calc(94px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#16a34a}
+#dealFab {right:calc(16px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#0b6e3b}
+#dealFab svg{display:block}
+#wandFab {right:calc(94px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));background:#7c3aed}
 
 /* Ghost preview of a move + its destination highlight. */
 .card.ghost{opacity:.5;pointer-events:none;outline:3px dashed #ffd54a;outline-offset:1px}
