@@ -809,15 +809,20 @@ window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerEnd);
 window.addEventListener("pointercancel", onPointerEnd);
 
-// While tap-to-play has destinations lit, the very next touch resolves the pick.
-// Capture phase so this beats any card's own handler: a touch on the board plays
-// to the spot under it (or cancels on empty felt), while a touch on a toolbar
-// control just cancels the pick and lets that control do its normal job.
+// While a tapped card's destinations are flashing, the very next touch resolves
+// the pick. Capture phase so this beats any card's own handler: a touch on a
+// flashing destination plays there; a touch on the card being moved is let
+// through so it can be picked up and tossed; a toolbar control just cancels; and
+// anything else cancels.
 window.addEventListener("pointerdown", (e) => {
   if (!pickMode) return;
   if (e.target.closest && e.target.closest("#toolbar, .fab, #installBanner, #winOverlay")){
     clearPick(); return;
   }
+  // Touching the card being decided: drop the hint and let the normal drag start,
+  // so the player can toss the card to a destination instead of tapping it.
+  const cardEl = e.target.closest && e.target.closest(".card");
+  if (cardEl && pickMode.group.some(c => c.el === cardEl)){ clearPick(); return; }
   resolvePick(boardPoint(e));
   e.preventDefault();
   e.stopPropagation();
@@ -849,10 +854,8 @@ document.addEventListener("touchstart", (e) => {
 /* --------------------------------------------------- legal-move enumeration -- */
 // Shared move-finding used by the Wand (auto-play), the stuck detector, and the
 // tap-to-play picker below.
-let pickMode = null;   // tap-to-play: destinations lit up, waiting for the pick
-let pickSeq = 0;       // supersedes an in-flight teasing loop when the pick changes
-let cycleG = null;     // wand-fork decision: a cycling ghost preview of each option
-let cycleSeq = 0;      // supersedes an in-flight cycling loop
+let pickMode = null;     // tap-to-play: a card's destinations are flashing, awaiting the pick
+let sourceFlash = null;  // wand decision: the playable cards are flashing, awaiting a pick
 let wandRunning = false, wandCount = 0;   // auto-play cascade state (+ runaway guard)
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
@@ -974,7 +977,7 @@ function isStuck(){
     G.piles.tableau.some(t => canDropTableau(c, t)));
 }
 
-function cancelCycle(){ clearPick(); clearCycleGhost(); cancelWand(); } // external interrupts (deal/drag/undo)
+function cancelCycle(){ clearPick(); clearSourceFlash(); cancelWand(); } // external interrupts (deal/drag/undo)
 
 /* -------------------------------------------------- tap-to-play (pick mode) -- */
 // Tapping a card auto-plays it. With several legal destinations we can't guess
@@ -994,69 +997,32 @@ function shakeCards(cards){
   });
 }
 
+// A tapped card can go several places: gently flash each destination (gold) and
+// the card itself (blue), then wait. The player taps a flashing destination, or
+// simply picks the card up and tosses it there; a tap anywhere else cancels.
 function enterPickMode(group, from, targets){
-  clearPick(); clearCycleGhost();
-  const lead = group[0], src = lead.home;
+  clearPick(); clearSourceFlash();
+  const lead = group[0];
   const lastOff = group[group.length - 1].home.y - lead.home.y;
-  const spots = [];
+  const spots = [], flashed = [];
   targets.forEach(to => {
     const base = cardXY(to, to.cards.length);           // where the lead would land
-    pileTopEl(to).classList.add("hint-now");            // glow every choice at once
+    const el = pileTopEl(to);
+    el.classList.add("flash-dst"); flashed.push(el);
     spots.push({ to, x: base.x, y: base.y, w: CARD_W, h: CARD_H + lastOff });
   });
-
-  // One translucent copy of the picked run. It doesn't sit still: it leans partway
-  // toward each choice in turn, backs off, and hesitates — signalling "your call."
-  const offs = group.map(card => ({ dx: card.home.x - src.x, dy: card.home.y - src.y }));
-  const nodes = group.map((card, i) => {
-    const el = card.el.cloneNode(true);
-    el.classList.add("ghost", "tease"); el.classList.remove("dragging");
-    el.style.zIndex = 4300;
-    el.style.transform = `translate(${src.x + offs[i].dx}px,${src.y + offs[i].dy}px)`;
-    boardEl.appendChild(el);
-    return el;
-  });
-
-  const token = ++pickSeq;
-  pickMode = { group, from, spots, nodes, offs, token };
-  teasePick(src, spots, token);
-}
-
-// The teasing loop: spring the ghost run partway toward each target in turn,
-// backing off to center and pausing between, so it's clear a choice is needed.
-// Runs until the pick is resolved or cancelled (detected via token mismatch).
-function teasePick(src, spots, token){
-  const LEAN = 0.42;                              // fraction of the way it drifts
-  const way = [];
-  spots.forEach(s => {
-    way.push({ x: src.x + LEAN*(s.x - src.x), y: src.y + LEAN*(s.y - src.y), hold: 560 });
-    way.push({ x: src.x, y: src.y, hold: 300 });  // back off & hesitate before the next
-  });
-  let wi = 0, dwell = 0, lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
-  const frame = (now) => {
-    if (!pickMode || pickMode.token !== token) return;   // resolved/cancelled → stop
-    let dt = (now - last)/1000; last = now; if (dt > 0.032) dt = 0.032;
-    const w = way[wi];
-    vX += (SPRING_K*(w.x - lx) - SPRING_D*vX) * dt;
-    vY += (SPRING_K*(w.y - ly) - SPRING_D*vY) * dt;
-    lx += vX*dt; ly += vY*dt;
-    pickMode.nodes.forEach((el, i) =>
-      el.style.transform = `translate(${lx + pickMode.offs[i].dx}px,${ly + pickMode.offs[i].dy}px)`);
-    dwell += dt*1000;
-    if (dwell >= w.hold){ dwell = 0; wi = (wi + 1) % way.length; }
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
+  lead.el.classList.add("flash-src"); flashed.push(lead.el);   // the card that will move
+  pickMode = { group, from, spots, flashed };
 }
 
 function clearPick(){
   if (!pickMode) return;
-  pickMode.nodes.forEach(n => n.remove());
-  document.querySelectorAll(".hint-now").forEach(e => e.classList.remove("hint-now"));
+  pickMode.flashed.forEach(el => el.classList.remove("flash-dst", "flash-src"));
   pickMode = null;
 }
 
-// A touch while destinations are lit: play to the spot under it, else cancel.
+// A touch while destinations are flashing: play to the spot under it, else cancel.
+// (Touches on the card itself are handled upstream so it can be dragged/tossed.)
 function resolvePick(pt){
   const pm = pickMode;
   clearPick();
@@ -1067,7 +1033,7 @@ function resolvePick(pt){
       return;
     }
   }
-  // tapped somewhere else → just cancel (cards are already back home)
+  // tapped somewhere else → just cancel
 }
 
 /* --------------------------------------------- combo button: deal ↔ auto-play -- */
@@ -1079,17 +1045,8 @@ const WAND_HTML = "🪄";
 
 function moveButtonTap(){
   if (wandRunning) return;                   // a cascade is already running
-  if (cycleG){
-    // A decision is on screen. Tapping the button accepts the option currently
-    // being shown and resumes the cascade — so you can just keep tapping to play
-    // it out. (Tapping the blue-lit card instead lets you choose a specific one.)
-    const m = cycleG.moves[cycleG.gi];
-    clearCycleGhost();
-    wandRunning = true; wandCount = 0;
-    cascadeMove(m);                          // plays it, then wandStep continues
-    updateMoveButton();
-    return;
-  }
+  if (sourceFlash){ clearSourceFlash(); return; }  // a decision is showing → dismiss the hint
+  if (pickMode){ clearPick(); return; }            // destinations showing → dismiss the hint
   if (buildMoves().length) wandCascade();
   else drawFromStock();
 }
@@ -1112,13 +1069,27 @@ function wandStep(){
   // 1) Obvious: sweep safe cards up to the foundations.
   const safe = safeCollectMove();
   if (safe){ cascadeMove(safe); return; }
-  // 2) Forced: exactly one genuinely-distinct productive move.
-  const moves = dedupeMoves(buildMoves());
-  if (moves.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
-  if (moves.length === 1){ cascadeMove(moves[0]); return; }
-  // 3) A real decision — hand it to the player with a cycling ghost.
+  // 2) Otherwise gather the productive source cards, each reduced to its real
+  //    decision the same way a direct tap would be (tapTargets: interchangeable
+  //    columns collapsed, an unforced foundation taken, only true forks kept).
+  const seen = new Set(), sources = [];
+  moveableCards().forEach(s => {
+    const lead = s.group[0];
+    if (seen.has(lead.id)) return; seen.add(lead.id);
+    const tt = tapTargets(s.group, s.from);
+    if (tt.length) sources.push({ group: s.group, from: s.from, tt });
+  });
+  if (sources.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
+  // 3) One card with one destination → play it and keep cascading.
+  if (sources.length === 1 && sources[0].tt.length === 1){
+    const s = sources[0];
+    cascadeMove({ group: s.group, from: s.from, to: s.tt[0] });
+    return;
+  }
+  // 4) A real decision — flash the choices and let the player pick.
   wandRunning = false;
-  enterCycleGhost(moves);
+  if (sources.length === 1) enterPickMode(sources[0].group, sources[0].from, sources[0].tt);  // one card, choose where
+  else enterSourceFlash(sources.map(s => s.group[0]));                                          // choose which card
   updateMoveButton();
 }
 
@@ -1144,76 +1115,20 @@ function safeCollectMove(){
   return null;
 }
 
-// Collapse equivalent moves so a "fork" only lists genuinely different choices:
-// for one lead card, every non-empty tableau column is the same landing, and all
-// empty columns are the same. If this leaves one move, it wasn't a fork at all.
-function moveKey(m){
-  const dst = m.to.type === "foundation" ? "F"
-            : m.to.cards.length === 0 ? "Te" : "Tc";
-  return m.group[0].id + ":" + dst;
+/* ------------------------------------------------ flash the choices at a decision -- */
+// Several genuinely different cards can be played (which pile to reveal, which
+// King to move, …). Rather than guess, gently flash each playable card and let
+// the player pick one; tapping it hands off to its own tap-to-play, which either
+// plays it or (if it too has a real choice) flashes its destinations.
+function enterSourceFlash(leads){
+  clearPick(); clearSourceFlash();
+  leads.forEach(l => l.el.classList.add("flash-src"));
+  sourceFlash = { els: leads.map(l => l.el) };
 }
-function dedupeMoves(moves){
-  const seen = new Set(), out = [];
-  for (const m of moves){ const k = moveKey(m); if (!seen.has(k)){ seen.add(k); out.push(m); } }
-  return out;
-}
-
-/* ------------------------------------------ cycling ghost: a real decision to make -- */
-// Several genuinely different moves are on the table (which pile to reveal, send a
-// card up or keep it to receive a run, …). Rather than guess, we glide a ghost of
-// each option source→destination in turn — about one per second, hesitating at the
-// end — lighting the card to grab (blue) and where it lands (gold). The player
-// resolves it by touching a source card (then a destination if it has a choice);
-// touching anywhere else, dealing, or undoing dismisses it.
-function clearCycleGhost(){
-  if (!cycleG) return;
-  clearTimeout(cycleG.timer);
-  cycleG.nodes.forEach(n => n.remove());
-  document.querySelectorAll(".hint-now,.hint-src").forEach(e => e.classList.remove("hint-now","hint-src"));
-  cycleG = null;
-}
-function enterCycleGhost(moves){
-  clearPick(); clearCycleGhost();
-  cycleG = { moves, gi: 0, nodes: [], timer: 0, token: ++cycleSeq };
-  showCycleGhost();
-}
-function showCycleGhost(){
-  const token = cycleG.token;
-  cycleG.nodes.forEach(n => n.remove()); cycleG.nodes = [];
-  document.querySelectorAll(".hint-now,.hint-src").forEach(e => e.classList.remove("hint-now","hint-src"));
-  const m = cycleG.moves[cycleG.gi];
-  const lead = m.group[0], src = lead.home;
-  const dst = cardXY(m.to, m.to.cards.length);
-  const offs = m.group.map(c => ({ dx: c.home.x - src.x, dy: c.home.y - src.y }));
-  cycleG.nodes = m.group.map((c, i) => {
-    const el = c.el.cloneNode(true);
-    el.classList.add("ghost", "tease"); el.classList.remove("dragging");
-    el.style.zIndex = 4300;
-    el.style.transform = `translate(${src.x + offs[i].dx}px,${src.y + offs[i].dy}px)`;
-    boardEl.appendChild(el);
-    return el;
-  });
-  lead.el.classList.add("hint-src");                  // the card to grab
-  pileTopEl(m.to).classList.add("hint-now");           // where it would go
-  // Glide the ghost source → destination, then hold (the "hesitation").
-  let lx = src.x, ly = src.y, vX = 0, vY = 0, last = performance.now();
-  const set = (x, y) => cycleG && cycleG.token === token &&
-    cycleG.nodes.forEach((el, i) => el.style.transform = `translate(${x + offs[i].dx}px,${y + offs[i].dy}px)`);
-  const frame = (now) => {
-    if (!cycleG || cycleG.token !== token) return;
-    let dt = (now - last)/1000; last = now; if (dt > 0.032) dt = 0.032;
-    vX += (SPRING_K*(dst.x - lx) - SPRING_D*vX) * dt;
-    vY += (SPRING_K*(dst.y - ly) - SPRING_D*vY) * dt;
-    lx += vX*dt; ly += vY*dt; set(lx, ly);
-    if (Math.hypot(dst.x - lx, dst.y - ly) < 0.6 && Math.hypot(vX, vY) < 14){ set(dst.x, dst.y); return; }
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
-  cycleG.timer = setTimeout(() => {                    // ~1s per option, then the next
-    if (!cycleG || cycleG.token !== token) return;
-    cycleG.gi = (cycleG.gi + 1) % cycleG.moves.length;
-    showCycleGhost();
-  }, 1100);
+function clearSourceFlash(){
+  if (!sourceFlash) return;
+  sourceFlash.els.forEach(el => el.classList.remove("flash-src"));
+  sourceFlash = null;
 }
 
 /* -------------------------------------------------------- deal-button artwork -- */
@@ -1231,7 +1146,7 @@ function updateMoveButton(){
   const el = document.getElementById("dealFab");
   if (!el) return;
   const dealt = !!(G.piles && G.piles.tableau);     // piles may not exist at first wiring
-  const wandMode = wandRunning || !!cycleG || (dealt && buildMoves().length > 0);
+  const wandMode = wandRunning || !!sourceFlash || (dealt && buildMoves().length > 0);
   el.classList.toggle("wand", wandMode);
   if (wandMode){
     if (el._mode !== "wand"){ el.innerHTML = WAND_HTML; el._mode = "wand"; }
