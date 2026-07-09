@@ -144,8 +144,9 @@ body.phone-mode .fab{display:flex}
 #dealFab svg{display:block}
 
 /* Gentle flashing hints: the cards you could play / where a card could go. Both
-   softly pulse a glow so a decision reads at a glance without anything moving. */
-.flash-dst,.flash-src{position:relative;z-index:60}
+   softly pulse a glow so a decision reads at a glance without anything moving.
+   NB: cards are position:absolute — do NOT set position here or they reflow. */
+.flash-dst,.flash-src{z-index:60}
 .flash-dst{animation:flashGold 1.15s ease-in-out infinite}   /* a place it can go */
 .flash-src{animation:flashBlue 1.15s ease-in-out infinite}   /* a card you can play */
 @keyframes flashGold{
