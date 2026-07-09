@@ -143,19 +143,20 @@ body.phone-mode .fab{display:flex}
 #dealFab.wand{background:#f0b429}      /* gold: auto-play available */
 #dealFab svg{display:block}
 
-/* Gentle flashing hints: the cards you could play / where a card could go. Both
-   softly pulse a glow so a decision reads at a glance without anything moving.
+/* Flashing hints: the cards you could play / where a card could go. Both pulse a
+   glow so a decision reads at a glance without anything moving. Playable cards
+   pulse a bright gold so they clearly stand out; destinations a softer gold.
    NB: cards are position:absolute — do NOT set position here or they reflow. */
 .flash-dst,.flash-src{z-index:60}
-.flash-dst{animation:flashGold 1.15s ease-in-out infinite}   /* a place it can go */
-.flash-src{animation:flashBlue 1.15s ease-in-out infinite}   /* a card you can play */
-@keyframes flashGold{
-  0%,100%{ box-shadow:0 0 0 2px #ffd54a55 }
-  50%    { box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0 }
+.flash-src{animation:flashSrc 1.0s ease-in-out infinite}     /* a card you can play — bright */
+.flash-dst{animation:flashDst 1.15s ease-in-out infinite}    /* a place it can go — softer */
+@keyframes flashSrc{
+  0%,100%{ box-shadow:0 0 0 3px #ffd54aaa,0 0 12px 3px #ffd54a80 }
+  50%    { box-shadow:0 0 0 5px #ffe680,0 0 30px 10px #ffd54aff }
 }
-@keyframes flashBlue{
-  0%,100%{ box-shadow:0 0 0 2px #5bc0ff55 }
-  50%    { box-shadow:0 0 0 4px #5bc0ff,0 0 16px 4px #5bc0ffc0 }
+@keyframes flashDst{
+  0%,100%{ box-shadow:0 0 0 2px #ffd54a44 }
+  50%    { box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0 }
 }
 
 /* Install banner (PWA) */
