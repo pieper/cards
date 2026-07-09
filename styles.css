@@ -154,6 +154,12 @@ body.phone-mode .fab{display:flex}
   0%,100%{ box-shadow:0 0 0 3px #ffd54aaa,0 0 12px 3px #ffd54a80 }
   50%    { box-shadow:0 0 0 5px #ffe680,0 0 30px 10px #ffd54aff }
 }
+/* "Pick one!" — a brief, faster, bigger pulse when the wand is tapped at a fork. */
+.flash-src.flash-strong{ animation:flashStrong .38s ease-in-out infinite }
+@keyframes flashStrong{
+  0%,100%{ box-shadow:0 0 0 4px #ffe680,0 0 20px 6px #ffd54a }
+  50%    { box-shadow:0 0 0 8px #fff3b0,0 0 46px 18px #ffd54aff }
+}
 @keyframes flashDst{
   0%,100%{ box-shadow:0 0 0 2px #ffd54a44 }
   50%    { box-shadow:0 0 0 4px #ffd54a,0 0 18px 5px #ffd54ac0 }

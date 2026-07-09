@@ -1045,10 +1045,21 @@ const WAND_HTML = "🪄";
 
 function moveButtonTap(){
   if (wandRunning) return;                   // a cascade is already running
-  if (sourceFlash){ clearSourceFlash(); return; }  // a decision is showing → dismiss the hint
+  if (sourceFlash){ intensifyFlash(); return; }    // choices are glowing → make them pop, "pick one"
   if (pickMode){ clearPick(); return; }            // destinations showing → dismiss the hint
   if (buildMoves().length) wandCascade();
   else drawFromStock();
+}
+
+// Hitting the wand while the choices glow gives them a brief, stronger pulse so
+// it's obvious the game is waiting for you to pick one of them.
+function intensifyFlash(){
+  if (!sourceFlash) return;
+  sourceFlash.els.forEach(el => el.classList.add("flash-strong"));
+  clearTimeout(sourceFlash.strongTimer);
+  sourceFlash.strongTimer = setTimeout(() => {
+    if (sourceFlash) sourceFlash.els.forEach(el => el.classList.remove("flash-strong"));
+  }, 1000);
 }
 
 // Auto-play forced/safe moves until only a real decision (or nothing) is left.
@@ -1093,14 +1104,20 @@ function wandStep(){
   updateMoveButton();
 }
 
-// Commit a move (fast anim) and continue the cascade the moment it lands.
+// Auto-play a move: briefly glow the card gold (so a lone play shows the same
+// golden cue as a choice does), then fly it home and continue the cascade.
 function cascadeMove(m){
-  pushHistory();
-  let z = 2600; m.group.forEach(c => c.el.style.zIndex = ++z);
-  commitMove(m.group, m.from, m.to);
-  const land = cardXY(m.to, m.to.cards.length - m.group.length);
-  animateGroup(makeDrag(m.group), land.x, land.y, 0, 0,
-    () => { layout(); sparkleLand(m.to); wandStep(); }, true);
+  const lead = m.group[0];
+  lead.el.classList.add("flash-src");                 // "here's the card I'm playing"
+  setTimeout(() => {
+    if (!wandRunning){ lead.el.classList.remove("flash-src"); return; }  // cancelled mid-glow
+    pushHistory();
+    let z = 2600; m.group.forEach(c => c.el.style.zIndex = ++z);
+    commitMove(m.group, m.from, m.to);
+    const land = cardXY(m.to, m.to.cards.length - m.group.length);
+    animateGroup(makeDrag(m.group), land.x, land.y, 0, 0,
+      () => { lead.el.classList.remove("flash-src"); layout(); sparkleLand(m.to); wandStep(); }, true);
+  }, 200);
 }
 
 // A safe foundation collect (one that never hurts tableau building), or null.
@@ -1127,7 +1144,8 @@ function enterSourceFlash(leads){
 }
 function clearSourceFlash(){
   if (!sourceFlash) return;
-  sourceFlash.els.forEach(el => el.classList.remove("flash-src"));
+  clearTimeout(sourceFlash.strongTimer);
+  sourceFlash.els.forEach(el => el.classList.remove("flash-src", "flash-strong"));
   sourceFlash = null;
 }
 
