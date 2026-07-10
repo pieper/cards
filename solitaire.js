@@ -1047,8 +1047,8 @@ function moveButtonTap(){
   if (wandRunning) return;                   // a cascade is already running
   if (sourceFlash){ intensifyFlash(); return; }    // choices are glowing → make them pop, "pick one"
   if (pickMode){ clearPick(); return; }            // destinations showing → dismiss the hint
-  if (buildMoves().length) wandCascade();
-  else drawFromStock();
+  if (wandActionable()) wandCascade();             // tableau work to do → let the wand play/flash
+  else drawFromStock();                            // only deck/foundation moves left → deal
 }
 
 // Hitting the wand while the choices glow gives them a brief, stronger pulse so
@@ -1071,36 +1071,50 @@ function wandCascade(){
 }
 function cancelWand(){ wandRunning = false; }
 
+// Tableau moves the wand handles itself (auto-play or flash) — NOT deck plays,
+// which are the player's strategic call (turn-3 timing / what to expose).
+function wandSources(){
+  const src = [];
+  moveableCards().forEach(s => {
+    if (s.from.type === "waste") return;                 // leave the deck to the player
+    const tt = tapTargets(s.group, s.from);
+    if (tt.length) src.push({ group: s.group, from: s.from, tt, lead: s.group[0] });
+  });
+  return src;
+}
+// Does the wand have work to do (button gold), or is it the player's turn to
+// drive the deck / retrieve from a foundation (button green)?
+function wandActionable(){
+  if (!(G.piles && G.piles.tableau)) return false;
+  return !!safeCollectMove() || wandSources().length > 0;
+}
+
 function wandStep(){
   if (!wandRunning) return;
   if (++wandCount > 400){ wandRunning = false; updateMoveButton(); return; }   // runaway guard
-  // 0) Endgame (everything face-up, deck done): blast it home like Auto-finish —
-  //    no reveals are left to decide, so there's nothing to pause on.
+  // 0) Endgame (everything face-up, deck done): blast it home like Auto-finish.
   if (isAutoFinishable()){ wandRunning = false; updateMoveButton(); autoCollectStep(true); return; }
   // 1) Obvious: sweep safe cards up to the foundations.
   const safe = safeCollectMove();
   if (safe){ cascadeMove(safe); return; }
-  // 2) Otherwise gather the productive source cards, each reduced to its real
-  //    decision the same way a direct tap would be (tapTargets: interchangeable
-  //    columns collapsed, an unforced foundation taken, only true forks kept).
-  const seen = new Set(), sources = [];
-  moveableCards().forEach(s => {
-    const lead = s.group[0];
-    if (seen.has(lead.id)) return; seen.add(lead.id);
-    const tt = tapTargets(s.group, s.from);
-    if (tt.length) sources.push({ group: s.group, from: s.from, tt });
-  });
-  if (sources.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
-  // 3) One card with one destination → play it and keep cascading.
-  if (sources.length === 1 && sources[0].tt.length === 1){
-    const s = sources[0];
-    cascadeMove({ group: s.group, from: s.from, to: s.tt[0] });
-    return;
-  }
-  // 4) A real decision — flash the choices and let the player pick.
+  // 2) Tableau moves, each reduced to its real decision via tapTargets.
+  const src = wandSources();
+  if (src.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
+  // 3) Auto-play a single-destination move that nothing else competes for — these
+  //    are order-independent (6→7 and 7→8, in any order, reach the same board), so
+  //    just do them; the cascade re-evaluates and clears the rest one by one.
+  const singles = src.filter(m => m.tt.length === 1);
+  const demand = new Map();
+  singles.forEach(m => { const k = m.tt[0].type + "#" + m.tt[0].index; demand.set(k, (demand.get(k) || 0) + 1); });
+  const free = singles.find(m => demand.get(m.tt[0].type + "#" + m.tt[0].index) === 1);
+  if (free){ cascadeMove({ group: free.group, from: free.from, to: free.tt[0] }); return; }
+  // 4) Only genuine choices remain — a card with several destinations, or cards
+  //    competing for one spot. Flash them and let the player decide.
   wandRunning = false;
-  if (sources.length === 1) enterPickMode(sources[0].group, sources[0].from, sources[0].tt);  // one card, choose where
-  else enterSourceFlash(sources.map(s => s.group[0]));                                          // choose which card
+  const seen = new Set(), leads = [];
+  src.forEach(m => { if (!seen.has(m.lead.id)){ seen.add(m.lead.id); leads.push(m.lead); } });
+  if (leads.length === 1 && src[0].tt.length > 1) enterPickMode(src[0].group, src[0].from, src[0].tt);  // one card, choose where
+  else enterSourceFlash(leads);                                                                          // choose which card
   updateMoveButton();
 }
 
@@ -1164,7 +1178,7 @@ function updateMoveButton(){
   const el = document.getElementById("dealFab");
   if (!el) return;
   const dealt = !!(G.piles && G.piles.tableau);     // piles may not exist at first wiring
-  const wandMode = wandRunning || !!sourceFlash || (dealt && buildMoves().length > 0);
+  const wandMode = wandRunning || !!sourceFlash || (dealt && wandActionable());
   el.classList.toggle("wand", wandMode);
   if (wandMode){
     if (el._mode !== "wand"){ el.innerHTML = WAND_HTML; el._mode = "wand"; }
