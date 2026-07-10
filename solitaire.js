@@ -1072,19 +1072,18 @@ function wandCascade(){
 }
 function cancelWand(){ wandRunning = false; }
 
-// Tableau moves the wand handles itself (auto-play or flash) — NOT deck plays,
-// which are the player's strategic call (turn-3 timing / what to expose).
+// Every productive move the wand should handle — tableau AND waste (playing a
+// card off the waste is a real move; it's how you expose the next deck card).
 function wandSources(){
   const src = [];
   moveableCards().forEach(s => {
-    if (s.from.type === "waste") return;                 // leave the deck to the player
     const tt = tapTargets(s.group, s.from);
     if (tt.length) src.push({ group: s.group, from: s.from, tt, lead: s.group[0] });
   });
   return src;
 }
-// Does the wand have work to do (button gold), or is it the player's turn to
-// drive the deck / retrieve from a foundation (button green)?
+// Does the wand have a move to make (button gold), or is dealing the only option
+// left (button green)?
 function wandActionable(){
   if (!(G.piles && G.piles.tableau)) return false;
   return !!safeCollectMove() || wandSources().length > 0;
