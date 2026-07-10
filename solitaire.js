@@ -1055,10 +1055,11 @@ function moveButtonTap(){
 // it's obvious the game is waiting for you to pick one of them.
 function intensifyFlash(){
   if (!sourceFlash) return;
-  sourceFlash.els.forEach(el => el.classList.add("flash-strong"));
+  const all = () => sourceFlash.els.concat(sourceFlash.peeks || []);
+  all().forEach(el => el.classList.add("flash-strong"));
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.strongTimer = setTimeout(() => {
-    if (sourceFlash) sourceFlash.els.forEach(el => el.classList.remove("flash-strong"));
+    if (sourceFlash) all().forEach(el => el.classList.remove("flash-strong"));
   }, 1000);
 }
 
@@ -1148,19 +1149,71 @@ function safeCollectMove(){
 
 /* ------------------------------------------------ flash the choices at a decision -- */
 // Several genuinely different cards can be played (which pile to reveal, which
-// King to move, …). Rather than guess, gently flash each playable card and let
-// the player pick one; tapping it hands off to its own tap-to-play, which either
-// plays it or (if it too has a real choice) flashes its destinations.
+// King to move, …). Flash each playable card gold, and — since the whole point of
+// the choice is usually what you'd uncover — peek the face-down card each play
+// would flip up, so you can see both outcomes before deciding (like playing one,
+// looking, undoing, and trying the other). Tapping a card (or its peek) plays it.
 function enterSourceFlash(leads){
   clearPick(); clearSourceFlash();
-  leads.forEach(l => l.el.classList.add("flash-src"));
-  sourceFlash = { els: leads.map(l => l.el) };
+  const peeks = [];
+  leads.forEach(lead => {
+    lead.el.classList.add("flash-src");
+    const loc = findCard(lead.id);
+    if (loc && loc.pile.type === "tableau" && loc.index > 0){
+      const under = loc.pile.cards[loc.index - 1];
+      if (under && !under.faceUp) peeks.push(makePeek(under, lead));   // this play reveals `under`
+    }
+  });
+  sourceFlash = { els: leads.map(l => l.el), peeks };
 }
 function clearSourceFlash(){
   if (!sourceFlash) return;
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.els.forEach(el => el.classList.remove("flash-src", "flash-strong"));
+  (sourceFlash.peeks || []).forEach(el => el.remove());
   sourceFlash = null;
+}
+
+// A face-up preview of the card a play would flip up, tucked in the felt just
+// below its column so the gold playable card above stays visible too. Tapping the
+// preview commits that play.
+function makePeek(hidden, lead){
+  const el = document.createElement("div");
+  el.className = `card face ${colorOf(hidden.suit)} peek flash-src`;
+  el.style.width = CARD_W + "px"; el.style.height = CARD_H + "px";
+  if (DECKS[currentDeck].type === "phone"){
+    el.innerHTML = phoneCardSVG(hidden);
+  } else {
+    const img = new Image();
+    img.draggable = false;
+    img.alt = `${RANKS[hidden.rank]}${SYMBOL[hidden.suit]}`;
+    img.onerror = () => { el.innerHTML = textFace(hidden); };
+    img.src = cardFile(hidden);
+    el.appendChild(img);
+  }
+  const col = findCard(lead.id).pile;                 // the source's column
+  const bottom = col.cards[col.cards.length - 1].home.y + CARD_H;
+  el.style.transform = `translate(${lead.home.x}px,${bottom + 12}px)`;   // just below it
+  el.style.zIndex = 4500;
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    clearSourceFlash();
+    playSourceCard(lead);
+  });
+  boardEl.appendChild(el);
+  return el;
+}
+
+// Play a specific card the same way tapping it would (used by peeks). Reveals a
+// destination pick if the card itself still has a real choice of where to go.
+function playSourceCard(card){
+  const loc = findCard(card.id);
+  if (!loc) return;
+  const group = loc.pile.cards.slice(loc.index);
+  const targets = tapTargets(group, loc.pile);
+  if (targets.length === 1) playCommit(group, loc.pile, targets[0]);
+  else if (targets.length === 0){ layout(); shakeCards(group); }
+  else enterPickMode(group, loc.pile, targets);
 }
 
 /* -------------------------------------------------------- deal-button artwork -- */
