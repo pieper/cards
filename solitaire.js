@@ -1055,11 +1055,10 @@ function moveButtonTap(){
 // it's obvious the game is waiting for you to pick one of them.
 function intensifyFlash(){
   if (!sourceFlash) return;
-  const all = () => sourceFlash.els.concat(sourceFlash.peeks || []);
-  all().forEach(el => el.classList.add("flash-strong"));
+  sourceFlash.els.forEach(el => el.classList.add("flash-strong"));
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.strongTimer = setTimeout(() => {
-    if (sourceFlash) all().forEach(el => el.classList.remove("flash-strong"));
+    if (sourceFlash) sourceFlash.els.forEach(el => el.classList.remove("flash-strong"));
   }, 1000);
 }
 
@@ -1152,33 +1151,45 @@ function safeCollectMove(){
 // the choice is usually what you'd uncover — peek the face-down card each play
 // would flip up, so you can see both outcomes before deciding (like playing one,
 // looking, undoing, and trying the other). Tapping a card (or its peek) plays it.
+const PEEK_SHIFT = 46;   // how far a movable card slides down to reveal the peek
+
 function enterSourceFlash(leads){
   clearPick(); clearSourceFlash();
-  const peeks = [];
+  const peeks = [], shifted = [];
   leads.forEach(lead => {
     lead.el.classList.add("flash-src");
     const loc = findCard(lead.id);
     if (loc && loc.pile.type === "tableau" && loc.index > 0){
       const under = loc.pile.cards[loc.index - 1];
-      if (under && !under.faceUp) peeks.push(makePeek(under, lead));   // this play reveals `under`
+      if (under && !under.faceUp){
+        peeks.push(makePeek(under, lead));            // the revealed card, in its real place
+        // Slide the movable card(s) down a bit and keep them on top in z-order, so
+        // the card they sit on peeks out above them.
+        loc.pile.cards.slice(loc.index).forEach((c, gi) => {
+          shifted.push({ el: c.el, tx: c.el.style.transform, z: c.el.style.zIndex });
+          c.el.style.transform = `translate(${c.home.x}px,${c.home.y + PEEK_SHIFT}px)`;
+          c.el.style.zIndex = 4500 + gi;
+        });
+      }
     }
   });
-  sourceFlash = { els: leads.map(l => l.el), peeks };
+  sourceFlash = { els: leads.map(l => l.el), peeks, shifted };
 }
 function clearSourceFlash(){
   if (!sourceFlash) return;
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.els.forEach(el => el.classList.remove("flash-src", "flash-strong"));
   (sourceFlash.peeks || []).forEach(el => el.remove());
+  (sourceFlash.shifted || []).forEach(s => { s.el.style.transform = s.tx; s.el.style.zIndex = s.z; });
   sourceFlash = null;
 }
 
-// A face-up preview of the card a play would flip up, tucked in the felt just
-// below its column so the gold playable card above stays visible too. Tapping the
-// preview commits that play.
+// A face-up preview of the card a play would flip up, drawn at that card's real
+// position (under the movable card, which is slid down over it). Tapping the
+// exposed sliver commits the play.
 function makePeek(hidden, lead){
   const el = document.createElement("div");
-  el.className = `card face ${colorOf(hidden.suit)} peek flash-src`;
+  el.className = `card face ${colorOf(hidden.suit)} peek`;
   el.style.width = CARD_W + "px"; el.style.height = CARD_H + "px";
   if (DECKS[currentDeck].type === "phone"){
     el.innerHTML = phoneCardSVG(hidden);
@@ -1190,10 +1201,9 @@ function makePeek(hidden, lead){
     img.src = cardFile(hidden);
     el.appendChild(img);
   }
-  const col = findCard(lead.id).pile;                 // the source's column
-  const bottom = col.cards[col.cards.length - 1].home.y + CARD_H;
-  el.style.transform = `translate(${lead.home.x}px,${bottom + 12}px)`;   // just below it
-  el.style.zIndex = 4500;
+  const { x, y } = hidden.home;                        // its real spot in the column
+  el.style.transform = `translate(${x}px,${y}px)`;
+  el.style.zIndex = 4400;                              // beneath the slid-down movable card
   el.addEventListener("pointerdown", (e) => {
     e.preventDefault(); e.stopPropagation();
     clearSourceFlash();
