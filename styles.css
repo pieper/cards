@@ -154,13 +154,9 @@ body.phone-mode .fab{display:flex}
   0%,100%{ box-shadow:0 0 0 3px #ffd54aaa,0 0 12px 3px #ffd54a80 }
   50%    { box-shadow:0 0 0 5px #ffe680,0 0 30px 10px #ffd54aff }
 }
-/* Peek: a preview of the card a play would flip up, drawn over the covering card
-   during a decision. A little eye marks it as a preview, not a real top card. */
-.card.peek{ cursor:pointer }
-.card.peek::after{
-  content:"👁"; position:absolute; top:3px; right:5px; font-size:15px;
-  filter:drop-shadow(0 1px 1px rgba(0,0,0,.6));
-}
+/* Peek: a half-size preview of the card a play would flip up. The small size and
+   drop shadow mark it as a preview, not a real card sitting on the stack. */
+.card.peek{ cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.5); outline:2px solid #ffffffcc }
 
 /* "Pick one!" — a brief, faster, bigger pulse when the wand is tapped at a fork. */
 .flash-src.flash-strong{ animation:flashStrong .38s ease-in-out infinite }

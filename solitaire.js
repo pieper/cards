@@ -856,6 +856,7 @@ document.addEventListener("touchstart", (e) => {
 // tap-to-play picker below.
 let pickMode = null;     // tap-to-play: a card's destinations are flashing, awaiting the pick
 let sourceFlash = null;  // wand decision: the playable cards are flashing, awaiting a pick
+let wiggleSeq = 0;       // supersedes an in-flight option-wiggle loop
 let wandRunning = false, wandCount = 0;   // auto-play cascade state (+ runaway guard)
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
@@ -1151,42 +1152,84 @@ function safeCollectMove(){
 // the choice is usually what you'd uncover — peek the face-down card each play
 // would flip up, so you can see both outcomes before deciding (like playing one,
 // looking, undoing, and trying the other). Tapping a card (or its peek) plays it.
-const PEEK_SHIFT = 46;   // how far a movable card slides down to reveal the peek
+const PEEK_SHIFT = 68;   // how far a movable card slides down to reveal the peek
 
 function enterSourceFlash(leads){
   clearPick(); clearSourceFlash();
-  const peeks = [], shifted = [];
+  const peeks = [], saved = [], wig = [];
   leads.forEach(lead => {
     lead.el.classList.add("flash-src");
     const loc = findCard(lead.id);
-    if (loc && loc.pile.type === "tableau" && loc.index > 0){
+    if (!loc) return;
+    const group = loc.pile.cards.slice(loc.index);
+    let baseDY = 0;
+    // If this play uncovers a face-down card, show a half-size preview of it in
+    // its real spot and slide the movable card(s) down below it.
+    if (loc.pile.type === "tableau" && loc.index > 0){
       const under = loc.pile.cards[loc.index - 1];
-      if (under && !under.faceUp){
-        peeks.push(makePeek(under, lead));            // the revealed card, in its real place
-        // Slide the movable card(s) down a bit and keep them on top in z-order, so
-        // the card they sit on peeks out above them.
-        loc.pile.cards.slice(loc.index).forEach((c, gi) => {
-          shifted.push({ el: c.el, tx: c.el.style.transform, z: c.el.style.zIndex });
-          c.el.style.transform = `translate(${c.home.x}px,${c.home.y + PEEK_SHIFT}px)`;
-          c.el.style.zIndex = 4500 + gi;
-        });
-      }
+      if (under && !under.faceUp){ peeks.push(makePeek(under, lead)); baseDY = PEEK_SHIFT; }
     }
+    // Lift the group's cards to the front (so their wiggle reads clearly) and set
+    // their resting position (slid down a touch when a peek sits above them).
+    group.forEach((c, gi) => {
+      saved.push({ el: c.el, tx: c.el.style.transform, z: c.el.style.zIndex });
+      c.el.style.zIndex = 4500 + gi;
+      c.el.style.transform = `translate(${c.home.x}px,${c.home.y + baseDY}px)`;
+    });
+    const tt = tapTargets(group, loc.pile);            // where this play would land
+    const land = tt.length ? cardXY(tt[0], tt[0].cards.length) : { x: lead.home.x, y: lead.home.y };
+    wig.push({ lead, group, base: { x: lead.home.x, y: lead.home.y + baseDY }, target: land });
   });
-  sourceFlash = { els: leads.map(l => l.el), peeks, shifted };
+  sourceFlash = { els: leads.map(l => l.el), peeks, saved, wig };
+  wiggleSources();
 }
+
+// Alternately ease each option a little way toward where it would go, so it's
+// clear these are moves waiting to be picked. Subtle, and one at a time.
+function wiggleSources(){
+  const token = sourceFlash.wtoken = ++wiggleSeq;
+  const AMP = 0.18, OUT = 480, HOLD = 240, IN = 420, GAP = 220;   // ms per phase
+  const cycle = OUT + HOLD + IN + GAP;
+  const smooth = u => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  const start = performance.now();
+  const frame = (now) => {
+    if (!sourceFlash || sourceFlash.wtoken !== token) return;
+    const wig = sourceFlash.wig; if (!wig.length) return;
+    const t = now - start, active = Math.floor(t / cycle) % wig.length, local = t % cycle;
+    let f = 0;   // 0..1 within the current lean
+    if (local < OUT) f = smooth(local / OUT);
+    else if (local < OUT + HOLD) f = 1;
+    else if (local < OUT + HOLD + IN) f = 1 - smooth((local - OUT - HOLD) / IN);
+    wig.forEach((it, i) => {
+      let dx = 0, dy = 0;
+      if (i === active && f > 0){
+        const rx = it.target.x - it.base.x, ry = it.target.y - it.base.y;
+        const dist = Math.hypot(rx, ry) || 1;
+        const mag = f * Math.min(AMP * dist, 55);   // part-way, but never a big lurch
+        dx = rx / dist * mag; dy = ry / dist * mag;
+      }
+      it.group.forEach(c => {
+        const ox = c.home.x - it.lead.home.x, oy = c.home.y - it.lead.home.y;
+        c.el.style.transform = `translate(${it.base.x + dx + ox}px,${it.base.y + dy + oy}px)`;
+      });
+    });
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
 function clearSourceFlash(){
   if (!sourceFlash) return;
+  wiggleSeq++;                                          // stop the wiggle loop
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.els.forEach(el => el.classList.remove("flash-src", "flash-strong"));
   (sourceFlash.peeks || []).forEach(el => el.remove());
-  (sourceFlash.shifted || []).forEach(s => { s.el.style.transform = s.tx; s.el.style.zIndex = s.z; });
+  (sourceFlash.saved || []).forEach(s => { s.el.style.transform = s.tx; s.el.style.zIndex = s.z; });
   sourceFlash = null;
 }
 
-// A face-up preview of the card a play would flip up, drawn at that card's real
-// position (under the movable card, which is slid down over it). Tapping the
-// exposed sliver commits the play.
+// A half-size, face-up preview of the card a play would flip up, drawn in that
+// card's real spot so it reads as a preview (not a real card on the stack).
 function makePeek(hidden, lead){
   const el = document.createElement("div");
   el.className = `card face ${colorOf(hidden.suit)} peek`;
@@ -1201,9 +1244,10 @@ function makePeek(hidden, lead){
     img.src = cardFile(hidden);
     el.appendChild(img);
   }
-  const { x, y } = hidden.home;                        // its real spot in the column
-  el.style.transform = `translate(${x}px,${y}px)`;
-  el.style.zIndex = 4400;                              // beneath the slid-down movable card
+  const { x, y } = hidden.home;                         // its real spot, centered, half size
+  el.style.transformOrigin = "top left";
+  el.style.transform = `translate(${x + CARD_W * 0.25}px,${y}px) scale(.5)`;
+  el.style.zIndex = 4400;
   el.addEventListener("pointerdown", (e) => {
     e.preventDefault(); e.stopPropagation();
     clearSourceFlash();
