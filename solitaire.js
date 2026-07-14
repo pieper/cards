@@ -257,9 +257,11 @@ function fitBoard(){
 
 function newGame(){
   if (typeof pickMode !== "undefined" && pickMode) clearPick();
+  if (typeof sourceFlash !== "undefined" && sourceFlash) clearSourceFlash();
   boardEl.innerHTML = "";
   buildPiles();
   G.byId = {}; G.history = []; G.winShown = false;
+  G.wandMode = false;
   G.turn3PassDone = false;
   G.passHadPlay = false;
   G.stuckNotified = false;
@@ -362,6 +364,7 @@ function tryRestore(){
 }
 function undo(){
   cancelCycle();
+  G.wandMode = false;
   if (!G.history.length) return;
   applySnapshot(G.history.pop());
 }
@@ -405,6 +408,7 @@ function sparkleLand(pile){
 
 function drawFromStock(){
   cancelCycle();
+  G.wandMode = false;                          // dealing hands the deck phase back to the player
   const stock = G.piles.stock, waste = G.piles.waste;
   pushHistory();
   if (stock.cards.length === 0){
@@ -570,6 +574,7 @@ function onPointerEnd(e){
   }
 
   if (chosen){
+    G.wandMode = false;                          // a hand-dragged move is manual control
     pushHistory();
     const dst = chosen;
     commitMove(d.group, d.src, dst);
@@ -604,6 +609,7 @@ function onPointerEnd(e){
   }
 
   // A real (missed) drag: settle back home.
+  G.wandMode = false;
   animateGroup(d, d.lead.home.x, d.lead.home.y, vx*0.25, vy*0.25, () => layout());
 }
 
@@ -705,6 +711,9 @@ function autoCollectStep(force){
 
 function afterMove(){
   updateFinishButton();
+  // In a wand session, picking an offered move resumes the cascade (it does its
+  // own safe-collecting, so skip the separate autoplay sweep).
+  if (G.wandMode){ wandCascade(); return; }
   if (document.getElementById("autoplay").checked) autoCollectStep(false);
   else checkWin();
 }
@@ -856,7 +865,6 @@ document.addEventListener("touchstart", (e) => {
 // tap-to-play picker below.
 let pickMode = null;     // tap-to-play: a card's destinations are flashing, awaiting the pick
 let sourceFlash = null;  // wand decision: the playable cards are flashing, awaiting a pick
-let wiggleSeq = 0;       // supersedes an in-flight option-wiggle loop
 let wandRunning = false, wandCount = 0;   // auto-play cascade state (+ runaway guard)
 
 const pileTopEl = p => (p.cards.length ? p.cards[p.cards.length - 1].el : p.el);
@@ -998,28 +1006,36 @@ function shakeCards(cards){
   });
 }
 
-// A tapped card can go several places: gently flash each destination (gold) and
-// the card itself (blue), then wait. The player taps a flashing destination, or
-// simply picks the card up and tosses it there; a tap anywhere else cancels.
+// A tapped card can go several places: flash each destination gold and lean the
+// card part-way toward each in turn, so the choice of where to send it reads the
+// same as a multi-card choice. Tap a destination (or toss the card there); a tap
+// anywhere else cancels.
 function enterPickMode(group, from, targets){
   clearPick(); clearSourceFlash();
   const lead = group[0];
   const lastOff = group[group.length - 1].home.y - lead.home.y;
-  const spots = [], flashed = [];
+  const spots = [], flashed = [], wig = [], saved = [];
   targets.forEach(to => {
     const base = cardXY(to, to.cards.length);           // where the lead would land
     const el = pileTopEl(to);
     el.classList.add("flash-dst"); flashed.push(el);
     spots.push({ to, x: base.x, y: base.y, w: CARD_W, h: CARD_H + lastOff });
+    wig.push({ lead, group, base: { x: lead.home.x, y: lead.home.y }, target: { x: base.x, y: base.y } });
   });
   lead.el.classList.add("flash-src"); flashed.push(lead.el);   // the card that will move
-  pickMode = { group, from, spots, flashed };
+  group.forEach((c, gi) => {                             // lift the run so its lean reads clearly
+    saved.push({ el: c.el, tx: c.el.style.transform, z: c.el.style.zIndex });
+    c.el.style.zIndex = 4500 + gi;
+  });
+  pickMode = { group, from, spots, flashed, wig, saved };
+  startWiggle(pickMode);
 }
 
 function clearPick(){
   if (!pickMode) return;
   pickMode.flashed.forEach(el => el.classList.remove("flash-dst", "flash-src"));
-  pickMode = null;
+  (pickMode.saved || []).forEach(s => { s.el.style.transform = s.tx; s.el.style.zIndex = s.z; });
+  pickMode = null;                                       // stops its wiggle (startWiggle checks this)
 }
 
 // A touch while destinations are flashing: play to the spot under it, else cancel.
@@ -1064,12 +1080,16 @@ function intensifyFlash(){
 }
 
 // Auto-play forced/safe moves until only a real decision (or nothing) is left.
+// G.wandMode marks a live wand session: it stays set while a decision waits, so
+// resolving the decision resumes the cascade (see afterMove).
 function wandCascade(){
   if (wandRunning) return;
+  G.wandMode = true;
   wandRunning = true; wandCount = 0;
   updateMoveButton();
   wandStep();
 }
+function endWand(){ wandRunning = false; G.wandMode = false; }
 function cancelWand(){ wandRunning = false; }
 
 // Every productive move the wand should handle — tableau AND waste (playing a
@@ -1091,15 +1111,15 @@ function wandActionable(){
 
 function wandStep(){
   if (!wandRunning) return;
-  if (++wandCount > 400){ wandRunning = false; updateMoveButton(); return; }   // runaway guard
+  if (++wandCount > 400){ endWand(); updateMoveButton(); return; }   // runaway guard
   // 0) Endgame (everything face-up, deck done): blast it home like Auto-finish.
-  if (isAutoFinishable()){ wandRunning = false; updateMoveButton(); autoCollectStep(true); return; }
+  if (isAutoFinishable()){ endWand(); updateMoveButton(); autoCollectStep(true); return; }
   // 1) Obvious: sweep safe cards up to the foundations.
   const safe = safeCollectMove();
   if (safe){ cascadeMove(safe); return; }
   // 2) Tableau moves, each reduced to its real decision via tapTargets.
   const src = wandSources();
-  if (src.length === 0){ wandRunning = false; checkWin(); updateFinishButton(); updateMoveButton(); return; }
+  if (src.length === 0){ endWand(); checkWin(); updateFinishButton(); updateMoveButton(); return; }
   // 3) Auto-play a single-destination move that nothing else competes for — these
   //    are order-independent (6→7 and 7→8, in any order, reach the same board), so
   //    just do them; the cascade re-evaluates and clears the rest one by one.
@@ -1181,38 +1201,38 @@ function enterSourceFlash(leads){
     wig.push({ lead, group, base: { x: lead.home.x, y: lead.home.y + baseDY }, target: land });
   });
   sourceFlash = { els: leads.map(l => l.el), peeks, saved, wig };
-  wiggleSources();
+  startWiggle(sourceFlash);
 }
 
 // Alternately ease each option a little way toward where it would go, so it's
-// clear these are moves waiting to be picked. Subtle, and one at a time.
-function wiggleSources(){
-  const token = sourceFlash.wtoken = ++wiggleSeq;
+// clear these are moves waiting to be picked. Subtle, one at a time. Works for a
+// list of different cards (each toward its target) AND for one card leaning toward
+// several targets — options may share a group, so we reset then move the active.
+function startWiggle(state){
   const AMP = 0.18, OUT = 480, HOLD = 240, IN = 420, GAP = 220;   // ms per phase
   const cycle = OUT + HOLD + IN + GAP;
   const smooth = u => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  const place = (it, dx, dy) => it.group.forEach(c => {
+    const ox = c.home.x - it.lead.home.x, oy = c.home.y - it.lead.home.y;
+    c.el.style.transform = `translate(${it.base.x + dx + ox}px,${it.base.y + dy + oy}px)`;
+  });
   const start = performance.now();
   const frame = (now) => {
-    if (!sourceFlash || sourceFlash.wtoken !== token) return;
-    const wig = sourceFlash.wig; if (!wig.length) return;
+    if ((sourceFlash || pickMode) !== state) return;   // superseded or cleared
+    const wig = state.wig; if (!wig.length) return;
     const t = now - start, active = Math.floor(t / cycle) % wig.length, local = t % cycle;
     let f = 0;   // 0..1 within the current lean
     if (local < OUT) f = smooth(local / OUT);
     else if (local < OUT + HOLD) f = 1;
     else if (local < OUT + HOLD + IN) f = 1 - smooth((local - OUT - HOLD) / IN);
-    wig.forEach((it, i) => {
-      let dx = 0, dy = 0;
-      if (i === active && f > 0){
-        const rx = it.target.x - it.base.x, ry = it.target.y - it.base.y;
-        const dist = Math.hypot(rx, ry) || 1;
-        const mag = f * Math.min(AMP * dist, 55);   // part-way, but never a big lurch
-        dx = rx / dist * mag; dy = ry / dist * mag;
-      }
-      it.group.forEach(c => {
-        const ox = c.home.x - it.lead.home.x, oy = c.home.y - it.lead.home.y;
-        c.el.style.transform = `translate(${it.base.x + dx + ox}px,${it.base.y + dy + oy}px)`;
-      });
-    });
+    wig.forEach(it => place(it, 0, 0));                 // everything rests at its base
+    if (f > 0){                                          // then the active option leans out
+      const it = wig[active];
+      const rx = it.target.x - it.base.x, ry = it.target.y - it.base.y;
+      const dist = Math.hypot(rx, ry) || 1;
+      const mag = f * Math.min(AMP * dist, 55);          // part-way, but never a big lurch
+      place(it, rx / dist * mag, ry / dist * mag);
+    }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -1220,12 +1240,11 @@ function wiggleSources(){
 
 function clearSourceFlash(){
   if (!sourceFlash) return;
-  wiggleSeq++;                                          // stop the wiggle loop
   clearTimeout(sourceFlash.strongTimer);
   sourceFlash.els.forEach(el => el.classList.remove("flash-src", "flash-strong"));
   (sourceFlash.peeks || []).forEach(el => el.remove());
   (sourceFlash.saved || []).forEach(s => { s.el.style.transform = s.tx; s.el.style.zIndex = s.z; });
-  sourceFlash = null;
+  sourceFlash = null;                                    // stops its wiggle (startWiggle checks this)
 }
 
 // A half-size, face-up preview of the card a play would flip up, drawn in that
