@@ -134,7 +134,7 @@ body{
   font-size:30px;line-height:1;cursor:pointer;z-index:3600;
   box-shadow:0 5px 16px #0008;
   align-items:center;justify-content:center;
-  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;touch-action:none;   /* a drag on it taps, never scrolls */
   transition:background .2s ease;
 }
 .fab:active{transform:scale(.93)}

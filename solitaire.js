@@ -837,20 +837,39 @@ window.addEventListener("pointerdown", (e) => {
   e.stopPropagation();
 }, true);
 
-// A touch anywhere that isn't a card runs the combo action (auto-play if a move
-// is available, else deal) — the whole board is a big, forgiving hit target, so
-// the small stock pile near the screen edge is no longer easy to miss. Cards keep
-// their own handler; pick-mode taps are consumed above before they reach here.
+// A TAP on bare felt (no card) runs the combo action — the whole board is a big,
+// forgiving hit target for the deck. But a DRAG on the felt is ignored (it must
+// not scroll the page or fire the button): remember the down point and only act
+// if the finger barely moved. Cards keep their own handler; pick-mode taps are
+// consumed above before they reach here.
+let feltTap = null;
 boardEl.addEventListener("pointerdown", (e) => {
+  feltTap = null;
   if (pickMode || G.drag) return;              // a pick or drag is in progress
   if (e.button != null && e.button !== 0) return;
   if (e.target.closest && e.target.closest(".card")) return;   // a real card → let it handle itself
-  moveButtonTap();
+  feltTap = { x: e.clientX, y: e.clientY, id: e.pointerId, t: performance.now() };
+});
+window.addEventListener("pointerup", (e) => {
+  if (!feltTap || e.pointerId !== feltTap.id) return;
+  const moved = Math.hypot(e.clientX - feltTap.x, e.clientY - feltTap.y);
+  const quick = performance.now() - feltTap.t < 500;
+  feltTap = null;
+  if (moved < 12 && quick) moveButtonTap();     // a genuine tap, not a drag
 });
 
-// Kill iOS Safari's edge swipe (back/forward navigation) so throwing a card from
-// the screen edge doesn't yank you off the page. touch-action/overscroll can't
-// stop it — you have to preventDefault the touch that starts in the edge strip.
+// iOS turns stray one-finger drags (on the felt, the wand button, empty space)
+// into page scroll / pull-to-refresh — pointless no-ops in a fixed board game.
+// Swallow them. Cards drive their own drags through pointer events (with
+// touch-action:none), so those keep working; the toolbar and popups still scroll.
+document.addEventListener("touchmove", (e) => {
+  if (e.touches.length !== 1) return;                        // let pinch-zoom through
+  if (e.target.closest && e.target.closest("#toolbar, #winOverlay, #installBanner")) return;
+  e.preventDefault();
+}, { passive: false });
+
+// Also kill iOS's edge swipe (back/forward navigation) at touchstart, so a drag
+// begun in the screen-edge strip can't yank you off the page.
 const EDGE_GUARD = 26;
 document.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) return;
@@ -1343,9 +1362,11 @@ else if (savedDeck && DECKS[savedDeck]) currentDeck = savedDeck;
 else if (IS_PHONE_SCREEN) currentDeck = "phone";
 deckSel.value = currentDeck;
 
-// "Phone mode" (Phone deck): show the thumb-reach combo button.
+// "Phone mode" (Phone deck): show the thumb-reach combo button. Fire on pointerup
+// (with touch-action:none) so a touch that jiggles a little still taps the button
+// instead of being read as a page scroll.
 const dealFab = document.getElementById("dealFab");
-dealFab.addEventListener("click", moveButtonTap);
+dealFab.addEventListener("pointerup", (e) => { if (e.button == null || e.button === 0) moveButtonTap(); });
 document.getElementById("drawThree").addEventListener("change", updateMoveButton);
 updateMoveButton();                                  // initial button state + art
 const updatePhoneMode = () =>
