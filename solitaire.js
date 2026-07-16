@@ -422,6 +422,7 @@ function drawFromStock(){
       G.turn3PassDone = true;
       t3.checked = false;
       sparkleBurst(document.getElementById("turn3label"));
+      if (typeof drawWinChart === "function") drawWinChart();   // gold → blue
     } else if (!t3.checked && !G.stuckNotified && isStuck()){
       // Already in turn-1 and there's genuinely nothing left to do → nudge New Game.
       G.stuckNotified = true;
@@ -939,6 +940,7 @@ function tapTargets(group, from){
     raw.find(t => t.type === "tableau" && t.cards.length > 0) ||  // any non-empty (all equal)
     raw.find(t => t.type === "tableau") || null;                  // else an empty column
   if (foundation && tableau){
+    if (from.type === "waste") return [foundation];   // a deck card would just auto-play up next anyway → suit stack
     if (isSafe(card)) return [foundation];            // it'd auto-play up anyway → top
     return tapKeepRevealsCard(card, from) ? [foundation, tableau] : [foundation];
   }
@@ -1367,7 +1369,7 @@ deckSel.value = currentDeck;
 // instead of being read as a page scroll.
 const dealFab = document.getElementById("dealFab");
 dealFab.addEventListener("pointerup", (e) => { if (e.button == null || e.button === 0) moveButtonTap(); });
-document.getElementById("drawThree").addEventListener("change", updateMoveButton);
+document.getElementById("drawThree").addEventListener("change", () => { updateMoveButton(); drawWinChart(); });
 updateMoveButton();                                  // initial button state + art
 const updatePhoneMode = () =>
   document.body.classList.toggle("phone-mode", currentDeck === "phone");
@@ -1503,9 +1505,13 @@ function scheduleWinProb(){
 }
 function resetWin(){ G.winHistory = []; lastPub = ""; drawWinChart(); }
 
+// Accent colour for the odds chart: gold in turn-3, blue in turn-1.
+const chartAccent = () => document.getElementById("drawThree").checked ? "#ffd54a" : "#5bc0ff";
+
 // Paint the win-probability strip (band + expected line + label) into a context
 // sized W×H (CSS px). Shared by the toolbar strip and the victory-popup recap.
-function paintWinStrip(ctx, W, H, raw, label){
+function paintWinStrip(ctx, W, H, raw, label, accent){
+  accent = accent || "#ffd54a";
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "#0a3d22"; ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = "#ffffff22"; ctx.lineWidth = 1;
@@ -1517,10 +1523,10 @@ function paintWinStrip(ctx, W, H, raw, label){
   ctx.beginPath();
   for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].high); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
   for (let i = n - 1; i >= 0; i--){ ctx.lineTo(X(i), Y(hist[i].low)); }
-  ctx.closePath(); ctx.fillStyle = "#ffd54a33"; ctx.fill();
+  ctx.closePath(); ctx.fillStyle = accent + "33"; ctx.fill();
   ctx.beginPath();
   for (let i = 0; i < n; i++){ const x = X(i), y = Y(hist[i].mid); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-  ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.stroke();
+  ctx.strokeStyle = accent; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.stroke();
   if (label){
     ctx.fillStyle = "#eafff1"; ctx.font = "600 12px -apple-system,Arial,sans-serif"; ctx.textAlign = "left";
     ctx.fillText(label, 8, 15);
@@ -1549,7 +1555,7 @@ function drawWinChart(){
   cv.style.display = "block";
   const raw = G.winHistory || [];
   const cssW = cv.clientWidth || 320, cssH = 66;
-  paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw));
+  paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw), chartAccent());
 }
 
 // Recap chart shown inside the "You win!" popup, so the player can see how the
@@ -1563,7 +1569,7 @@ function drawFinalWinChart(){
   wrap.hidden = false;
   requestAnimationFrame(() => {                          // let the popup lay out first
     const cssW = cv.clientWidth || 440, cssH = 104;
-    paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw));
+    paintWinStrip(fitCanvasCtx(cv, cssW, cssH), cssW, cssH, raw, winLabel(raw), chartAccent());
   });
 }
 
